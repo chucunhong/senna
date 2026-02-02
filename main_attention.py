@@ -25,7 +25,7 @@ Key Objectives:
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
-from data_loader import load_german_credit_data_balanced, load_dataset_generic
+from data_loader import load_dataset  # Main function - use this for all datasets
 from visualization import (
     visualize_reconstruction_and_attention, 
     visualize_batch_analysis, 
@@ -165,14 +165,9 @@ if __name__ == "__main__":
     print(f"TRAINING ON DATASET: {args.dataset}")
     print("=" * 70)
     
-    # Load dataset
+    # Load dataset - use processed_data if available for consistency
     try:
-        if args.dataset == "german-credit-data":
-            sentences, labels, data, _ = load_german_credit_data_balanced(n_samples=None)
-        else:
-            sentences, labels, data, _ = load_dataset_generic(
-                args.dataset,
-            )
+        sentences, labels, data, _ = load_dataset(args.dataset)
     except Exception as e:
         print(f"\n❌ Error loading dataset: {e}")
         exit(1)

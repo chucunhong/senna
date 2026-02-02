@@ -453,6 +453,9 @@ def load_german_credit_from_csv(csv_path=None):
 def load_german_credit_data():
     """
     Load German Credit Data (attempts CSV first, then OpenML as fallback).
+    
+    DEPRECATED: Use load_dataset('german-credit-data') instead for consistency.
+    This function is kept for backward compatibility.
     """
     try:
         # Try multiple CSV paths
@@ -532,6 +535,9 @@ def load_german_credit_data_balanced(n_samples=None, random_state=42):
     """
     Load German Credit Data and balance the classes.
     
+    DEPRECATED: Use load_dataset('german-credit-data', n_samples=n_samples) instead for consistency.
+    This function is kept for backward compatibility.
+    
     Args:
         n_samples: Total number of samples to return. If None, use all data
         random_state: Seed for reproducibility
@@ -573,8 +579,11 @@ def load_german_credit_data_balanced(n_samples=None, random_state=42):
 
 def load_dataset_generic(dataset_name, csv_path=None, n_samples=None, random_state=42):
     """
-    Generic loader for different datasets.
+    Generic loader for different datasets (internal use - loads from raw data only).
     Supports: adult, bank-marketing, credit-scoring, dutch-census, german-credit-data, credit-card-clients, kdd-census-income
+    
+    NOTE: For most use cases, use load_dataset() instead, which prioritizes processed_data.
+    This function is used internally by load_dataset() when raw data needs to be loaded.
     
     Args:
         dataset_name: Name of dataset (without .csv)
@@ -712,6 +721,16 @@ def load_dataset_generic(dataset_name, csv_path=None, n_samples=None, random_sta
     print(f"  Total samples: {len(labels)}")
     print(f"  Label distribution: {sum(labels)} (1), {len(labels) - sum(labels)} (0)")
     
+    # Automatically save processed data for future use
+    processed_data_dir = "processed_data"
+    processed_data_path = os.path.join(processed_data_dir, f"{dataset_name}.csv")
+    if not os.path.exists(processed_data_path):
+        print(f"\nSaving processed data for future use...")
+        save_processed_data(sentences, labels, dataset_name, processed_data_dir)
+    else:
+        print(f"\n✓ Processed data already exists at: {processed_data_path}")
+        print(f"  (Skipping save to avoid overwriting existing data)")
+    
     return sentences, labels, df, sensitive_attrs
 
 
@@ -741,6 +760,111 @@ if __name__ == "__main__":
         print("Download from: https://archive.ics.uci.edu/ml/datasets/statlog+(german+credit+data)")
         print("\nThe CSV should have these columns:")
         print("  age, sex, credit_amount, duration, purpose, job, checking_account, savings_account, class")
+
+def load_dataset(dataset_name, processed_data_dir="processed_data", n_samples=None, random_state=42):
+    """
+    Main function to load dataset - prioritizes processed_data, falls back to raw data.
+    This ensures consistency across all scripts (main_attention, generate_synthetic_data, etc.)
+    
+    This is the RECOMMENDED function to use for loading datasets.
+    
+    Args:
+        dataset_name: Name of dataset (e.g., 'german-credit-data', 'adult')
+        processed_data_dir: Directory containing processed data (default: 'processed_data')
+        n_samples: Number of samples to return (if None, use all)
+        random_state: Seed for reproducibility
+    
+    Returns:
+        sentences, labels, data, sensitive_attrs (same format as load_dataset_generic)
+    """
+    import pandas as pd
+    
+    csv_path = os.path.join(processed_data_dir, f"{dataset_name}.csv")
+    
+    # Try to load from processed_data first
+    if os.path.exists(csv_path):
+        print(f"\n{'='*70}")
+        print(f"Loading dataset from processed_data: {dataset_name}")
+        print(f"{'='*70}")
+        print(f"✓ Found processed data at: {csv_path}")
+        
+        df = pd.read_csv(csv_path)
+        
+        if 'sentence' not in df.columns:
+            raise ValueError(f"CSV file must have 'sentence' column. Found columns: {df.columns.tolist()}")
+        if 'label' not in df.columns:
+            raise ValueError(f"CSV file must have 'label' column. Found columns: {df.columns.tolist()}")
+        
+        sentences = df['sentence'].astype(str).tolist()
+        labels = df['label'].astype(int).tolist()
+        
+        # Sample if needed
+        if n_samples is not None and len(sentences) > n_samples:
+            np.random.seed(random_state)
+            indices = np.random.choice(len(sentences), size=n_samples, replace=False)
+            sentences = [sentences[i] for i in indices]
+            labels = [labels[i] for i in indices]
+            df = df.iloc[indices].reset_index(drop=True)
+        
+        # Extract sensitive attributes from original data if available
+        # Try to load original data to get sensitive attributes
+        sensitive_attrs = {}
+        try:
+            # Try to load original CSV to get sensitive attributes
+            original_csv_paths = [
+                f"data/{dataset_name}.csv",
+                f"{dataset_name}.csv",
+                f"./data/{dataset_name}.csv"
+            ]
+            original_csv_path = None
+            for p in original_csv_paths:
+                if os.path.exists(p):
+                    original_csv_path = p
+                    break
+            
+            if original_csv_path:
+                df_original = pd.read_csv(original_csv_path)
+                df_original.columns = [col.lower().strip() for col in df_original.columns]
+                sensitive_attrs = {
+                    'age': df_original['age'].values if 'age' in df_original.columns else None,
+                    'sex': df_original['sex'].values if 'sex' in df_original.columns else (
+                        df_original['gender'].values if 'gender' in df_original.columns else None
+                    ),
+                    'race': df_original['race'].values if 'race' in df_original.columns else None
+                }
+        except Exception as e:
+            print(f"  ⚠ Could not load sensitive attributes from original data: {e}")
+            sensitive_attrs = {}
+        
+        print(f"  Total samples: {len(labels)}")
+        print(f"  Label distribution: {sum(labels)} (1), {len(labels) - sum(labels)} (0)")
+        
+        return sentences, labels, df, sensitive_attrs
+    
+    # If processed_data doesn't exist, load from raw data and save
+    else:
+        print(f"\n{'='*70}")
+        print(f"Processed data not found, loading from raw data: {dataset_name}")
+        print(f"{'='*70}")
+        print(f"  Will save to: {csv_path}")
+        
+        # Load from raw data
+        sentences, labels, df, sensitive_attrs = load_dataset_generic(
+            dataset_name, 
+            csv_path=None, 
+            n_samples=n_samples, 
+            random_state=random_state
+        )
+        
+        # Note: load_dataset_generic already saves to processed_data automatically
+        # So we don't need to save again here
+        
+        return sentences, labels, df, sensitive_attrs
+
+
+# Alias for backward compatibility
+load_dataset_from_processed_or_raw = load_dataset
+
 
 def save_processed_data(sentences, labels, dataset_name, processed_data_dir="processed_data"):
     """
