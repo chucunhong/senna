@@ -3,9 +3,10 @@
     "sentences": [
       "A {age}-year-old {sex} applicant with {marital_status} status, working as {job}.",
       "The request is {credit_amount} for {purpose} over {duration} months, with checking account {checking_account} and savings account {savings_account}.",
-      "The person lists credit history {credit_history}, employment since {employment_since}, installment rate {installment_rate}, and other debtors {other_debtors}.",
-      "Current details include residence since {residence_since} years, property {property}, other installment plans {other_installment}, housing {housing}, and existing credits {existing_credits}.",
-      "The person supports {num_people} dependents, has telephone access {telephone}, and has foreign-worker status {foreign_worker}."
+      "The person lists credit history {credit_history}, employment since {employment_since}, {installment_rate} installment rate, and {other_debtors} other debtors.",
+      "Current details include residence since {residence_since} years, property {property}, {other_installment} other installment plans, housing {housing}, and {existing_credits} existing credits.",
+      "The person supports {num_people}, {telephone} telephone access, and has {foreign_worker} foreign-worker status.",
+      "The credit application has been evaluated and the decision is {label}, where {label} represents the credit risk classification (0 for good credit risk, 1 for bad credit risk)."
     ],
     "field_mapping": {
       "age": ["age", "Age"],
@@ -28,14 +29,16 @@
       "existing_credits": ["existing-credits", "existing_credits", "Existing-Credits"],
       "num_people": ["number-people-provide-maintenance-for", "number_people_provide_maintenance_for", "Number-People-Provide-Maintenance-For"],
       "telephone": ["telephone", "Telephone"],
-      "foreign_worker": ["foreign-worker", "foreign_worker", "Foreign-Worker"]
+      "foreign_worker": ["foreign-worker", "foreign_worker", "Foreign-Worker"],
+      "label": ["label", "Label", "credit_risk", "credit-risk", "Credit-Risk", "decision", "Decision"]
     }
   },
   "adult": {
     "sentences": [
         "A {age}-year-old {gender} with race {race}, marital status {marital_status}, and relationship {relationship}.",
         "This person works as {occupation} in {workclass}, with {education} education (level {educational_num}), working {hours_per_week} hours per week.",
-        "Capital gain is {capital_gain}, capital loss is {capital_loss}, native country is {native_country}, and fnlwgt is {fnlwgt}."
+        "Capital gain is {capital_gain}, capital loss is {capital_loss}, native country is {native_country}, and fnlwgt is {fnlwgt}.",
+        "The income classification for this person is {label}, where {label} indicates whether the annual income is above 50K (1) or below 50K (0)."
     ],
     "field_mapping": {
       "age": ["age"],
@@ -51,7 +54,8 @@
       "capital_gain": ["capital-gain", "capital_gain"],
       "capital_loss": ["capital-loss", "capital_loss"],
       "native_country": ["native-country", "native_country"],
-      "fnlwgt": ["fnlwgt"]
+      "fnlwgt": ["fnlwgt"],
+      "label": ["label", "Label", "income", "Income", "income_class", "income-class", "Income-Class", "decision", "Decision"]
     }
   }
 }

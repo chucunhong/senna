@@ -146,8 +146,16 @@ def format_sentence_from_template(row, template_config):
         values[field_name] = normalize_value(raw_value, field_name) if raw_value else None
     
     # Format each sentence template
+    # IMPORTANT: Skip the last sentence (label sentence) to avoid including label in processed_data
     formatted_sentences = []
-    for template in template_config['sentences']:
+    sentences_list = template_config['sentences']
+    
+    # Skip the last sentence (label sentence) - it contains label information
+    # For german-credit-data: "The credit application has been evaluated and the decision is {label}..."
+    # For adult: "The income classification for this person is {label}..."
+    templates_to_process = sentences_list[:-1] if len(sentences_list) > 0 else []
+    
+    for template in templates_to_process:
         # Replace placeholders with values
         formatted = template
         for field_name, value in values.items():

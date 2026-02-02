@@ -94,7 +94,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lambda-task",
         type=float,
-        default=10.0,
+        default=3.0,
         help="Task loss weight (default: 10.0 to strongly prioritize learning task from z_c)"
     )
     parser.add_argument(
@@ -130,8 +130,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--latent-dim",
         type=int,
-        default=64,
-        help="Latent dimension for z_c and z_d (VAE bottleneck, default: 64)"
+        default=128,
+        help="Latent dimension for z_c and z_d (VAE bottleneck, default: 128)"
     )
     parser.add_argument(
         "--lr",
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             if gpu_memory_gb >= 30:  # RTX 5090, A100, etc. (30GB+)
-                args.batch_size = 200
+                args.batch_size = 250
             elif gpu_memory_gb >= 20:  # RTX 4090, etc. (20-30GB)
                 args.batch_size = 64
             elif gpu_memory_gb >= 10:  # RTX 3080, etc. (10-20GB)

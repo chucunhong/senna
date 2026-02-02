@@ -6,16 +6,26 @@ find optimal K, and sample representative sentences from each cluster.
 This script:
 1. Reads data from processed_data/{dataset_name}.csv
 2. Loads the corresponding best_model from models/{dataset_name}/
-3. Generates z_d embeddings using the model
-4. Clusters based on z_d
-5. Finds optimal number of clusters
-6. Samples n samples from each cluster
+3. Generates z_d embeddings using the model (unless --resample-only)
+4. Splits data into two groups based on labels (0 and 1)
+5. For each group, clusters based on z_d and finds optimal K (unless --resample-only)
+6. For each group, samples n samples from each cluster
+7. Saves cluster info to {output_dir}/{dataset}/clusters/ for future resampling
+8. Saves combined results to {output_dir}/{dataset}/{timestamp}_{n_examples}/
 
 Usage:
+    # First time: perform clustering and save cluster info
     python cluster_and_sample.py \
         --dataset german-credit-data \
         --output-dir sampled_data \
         --n-examples 10
+    
+    # Later: resample from existing clusters (no re-clustering)
+    python cluster_and_sample.py \
+        --dataset german-credit-data \
+        --output-dir sampled_data \
+        --n-examples 20 \
+        --resample-only
 """
 
 import numpy as np
@@ -117,6 +127,7 @@ def load_embeddings(embeddings_path):
 def load_processed_data(dataset_name, processed_data_dir="processed_data"):
     """
     Load processed data from processed_data/{dataset_name}.csv
+    If not found, attempts to load from raw data and create processed data.
     
     Args:
         dataset_name: Name of dataset (e.g., 'german-credit-data')
@@ -130,10 +141,36 @@ def load_processed_data(dataset_name, processed_data_dir="processed_data"):
     csv_path = os.path.join(processed_data_dir, f"{dataset_name}.csv")
     
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(
-            f"Processed data file not found: {csv_path}\n"
-            f"Please ensure the file exists in {processed_data_dir}/ directory."
-        )
+        print(f"⚠ Processed data file not found: {csv_path}")
+        print(f"Attempting to load from raw data and create processed data...")
+        
+        # Try to load from raw data using data_loader
+        if DATA_LOADER_AVAILABLE:
+            try:
+                from data_loader import load_dataset_generic, save_processed_data
+                
+                print(f"Loading raw data for dataset: {dataset_name}")
+                sentences, labels, df, _ = load_dataset_generic(dataset_name)
+                
+                # Save processed data for future use
+                os.makedirs(processed_data_dir, exist_ok=True)
+                save_processed_data(sentences, labels, dataset_name, processed_data_dir)
+                
+                print(f"✓ Created processed data file: {csv_path}")
+                return sentences, labels, df
+            except Exception as e:
+                print(f"❌ Failed to load from raw data: {e}")
+                raise FileNotFoundError(
+                    f"Processed data file not found: {csv_path}\n"
+                    f"Attempted to load from raw data but failed: {e}\n"
+                    f"Please ensure the file exists in {processed_data_dir}/ directory or that raw data exists in data/ directory."
+                )
+        else:
+            raise FileNotFoundError(
+                f"Processed data file not found: {csv_path}\n"
+                f"Please ensure the file exists in {processed_data_dir}/ directory.\n"
+                f"Or ensure data_loader is available to create processed data from raw data."
+            )
     
     print(f"Loading processed data from: {csv_path}")
     df = pd.read_csv(csv_path)
@@ -352,7 +389,7 @@ def plot_k_selection(scores, output_dir):
     plt.close()
 
 
-def cluster_and_sample(z_d, sentences, labels=None, k=None, n_examples=10, random_state=42):
+def cluster_and_sample(z_d, sentences, labels=None, k=None, n_examples=10, random_state=42, label_group=None):
     """
     Perform K-means clustering on z_d embeddings and sample examples from each cluster.
     
@@ -363,6 +400,7 @@ def cluster_and_sample(z_d, sentences, labels=None, k=None, n_examples=10, rando
         k: Number of clusters (if None, will find optimal)
         n_examples: Number of examples to sample from each cluster
         random_state: Random seed
+        label_group: Label value for this group (for logging purposes)
     
     Returns:
         clusters: Dictionary with cluster assignments and sampled data
@@ -370,7 +408,8 @@ def cluster_and_sample(z_d, sentences, labels=None, k=None, n_examples=10, rando
     if k is None:
         raise ValueError("k must be specified")
     
-    print(f"\nPerforming K-means clustering with K={k} on z_d embeddings...")
+    group_info = f" (label={label_group})" if label_group is not None else ""
+    print(f"\nPerforming K-means clustering with K={k} on z_d embeddings{group_info}...")
     np.random.seed(random_state)
     
     # K-means clustering on z_d
@@ -379,7 +418,7 @@ def cluster_and_sample(z_d, sentences, labels=None, k=None, n_examples=10, rando
     
     # Get cluster statistics
     unique_clusters, counts = np.unique(cluster_labels, return_counts=True)
-    print(f"✓ Clustering complete!")
+    print(f"✓ Clustering complete{group_info}!")
     print(f"  Cluster sizes: {dict(zip(unique_clusters, counts))}")
     
     # Sample from each cluster
@@ -418,7 +457,152 @@ def cluster_and_sample(z_d, sentences, labels=None, k=None, n_examples=10, rando
     return clusters, cluster_labels, kmeans
 
 
-def save_clustered_data(clusters, cluster_labels, sentences, labels=None, output_dir="sampled_data", filename="sampled_sentences"):
+def save_cluster_info(cluster_labels, k, kmeans, output_dir, label_group):
+    """
+    Save cluster information for resampling later.
+    This saves the cluster assignments and K-means model info so we can resample
+    without re-clustering.
+    
+    Args:
+        cluster_labels: Array of cluster assignments for all samples
+        k: Number of clusters
+        kmeans: Fitted KMeans model
+        output_dir: Directory to save cluster info
+        label_group: Label value (0 or 1)
+    
+    Returns:
+        Path to saved cluster info JSON file
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save cluster assignments as numpy array
+    cluster_assignments_path = os.path.join(output_dir, "cluster_assignments.npy")
+    np.save(cluster_assignments_path, cluster_labels)
+    
+    # Save cluster info as JSON
+    cluster_info = {
+        'label_group': label_group,
+        'k': int(k),
+        'n_samples': int(len(cluster_labels)),
+        'cluster_centers': kmeans.cluster_centers_.tolist(),
+        'cluster_sizes': {
+            int(cluster_id): int(count) 
+            for cluster_id, count in zip(*np.unique(cluster_labels, return_counts=True))
+        },
+        'cluster_assignments_path': cluster_assignments_path,
+        'timestamp': datetime.now().strftime("%Y%m%d_%H%M%S")
+    }
+    
+    cluster_info_path = os.path.join(output_dir, "cluster_info.json")
+    with open(cluster_info_path, 'w') as f:
+        json.dump(cluster_info, f, indent=2)
+    
+    print(f"✓ Saved cluster info to: {cluster_info_path}")
+    print(f"✓ Saved cluster assignments to: {cluster_assignments_path}")
+    
+    return cluster_info_path
+
+
+def load_cluster_info(cluster_info_dir, label_group):
+    """
+    Load previously saved cluster information.
+    
+    Args:
+        cluster_info_dir: Directory containing cluster_info.json and cluster_assignments.npy
+        label_group: Label value (0 or 1)
+    
+    Returns:
+        cluster_labels: Array of cluster assignments
+        cluster_info: Dictionary with cluster information
+    """
+    cluster_info_path = os.path.join(cluster_info_dir, "cluster_info.json")
+    cluster_assignments_path = os.path.join(cluster_info_dir, "cluster_assignments.npy")
+    
+    if not os.path.exists(cluster_info_path):
+        raise FileNotFoundError(f"Cluster info not found: {cluster_info_path}")
+    if not os.path.exists(cluster_assignments_path):
+        raise FileNotFoundError(f"Cluster assignments not found: {cluster_assignments_path}")
+    
+    # Load cluster info
+    with open(cluster_info_path, 'r') as f:
+        cluster_info = json.load(f)
+    
+    # Verify label group matches
+    if cluster_info['label_group'] != label_group:
+        raise ValueError(
+            f"Label group mismatch: expected {label_group}, "
+            f"but cluster info has {cluster_info['label_group']}"
+        )
+    
+    # Load cluster assignments
+    cluster_labels = np.load(cluster_assignments_path)
+    
+    print(f"✓ Loaded cluster info for label {label_group}: K={cluster_info['k']}, "
+          f"{len(cluster_labels)} samples")
+    
+    return cluster_labels, cluster_info
+
+
+def resample_from_clusters(cluster_labels, sentences, labels=None, n_examples=10, 
+                           random_state=42, label_group=None):
+    """
+    Resample examples from existing clusters without re-clustering.
+    
+    Args:
+        cluster_labels: Array of cluster assignments
+        sentences: List of sentences
+        labels: Optional labels
+        n_examples: Number of examples to sample from each cluster
+        random_state: Random seed
+        label_group: Label value for this group (for logging purposes)
+    
+    Returns:
+        clusters: Dictionary with cluster assignments and sampled data
+    """
+    group_info = f" (label={label_group})" if label_group is not None else ""
+    print(f"\nResampling from existing clusters{group_info}...")
+    np.random.seed(random_state)
+    
+    # Get unique clusters
+    unique_clusters = np.unique(cluster_labels)
+    k = len(unique_clusters)
+    
+    print(f"  Found {k} clusters{group_info}")
+    
+    # Sample from each cluster
+    clusters = {}
+    for cluster_id in unique_clusters:
+        # Get indices of samples in this cluster
+        cluster_indices = np.where(cluster_labels == cluster_id)[0]
+        cluster_size = len(cluster_indices)
+        
+        # Sample n_examples (or all if cluster is smaller)
+        n_sample = min(n_examples, cluster_size)
+        sampled_indices = np.random.choice(cluster_indices, size=n_sample, replace=False)
+        
+        # Get sampled data
+        sampled_sentences = [sentences[i] for i in sampled_indices]
+        
+        cluster_data = {
+            'cluster_id': int(cluster_id),
+            'cluster_size': int(cluster_size),
+            'n_sampled': int(n_sample),
+            'indices': sampled_indices.tolist(),
+            'sentences': sampled_sentences
+        }
+        
+        # Add labels if available
+        if labels is not None:
+            cluster_data['labels'] = [labels[i] for i in sampled_indices]
+        
+        clusters[cluster_id] = cluster_data
+        
+        print(f"  Cluster {cluster_id}: {cluster_size} samples, sampled {n_sample}")
+    
+    return clusters
+
+
+def save_clustered_data(clusters, cluster_labels, sentences, labels=None, output_dir="sampled_data", filename="sampled_sentences", label_group=None):
     """Save clustered and sampled data to files."""
     os.makedirs(output_dir, exist_ok=True)
     
@@ -426,14 +610,14 @@ def save_clustered_data(clusters, cluster_labels, sentences, labels=None, output
     all_sampled_sentences = []
     all_cluster_ids = []
     all_indices = []
-    all_labels = []
+    all_labels_list = []
     
     for cluster_id, cluster_data in clusters.items():
         all_sampled_sentences.extend(cluster_data['sentences'])
         all_cluster_ids.extend([cluster_id] * len(cluster_data['sentences']))
         all_indices.extend(cluster_data['indices'])
         if labels is not None:
-            all_labels.extend(cluster_data.get('labels', []))
+            all_labels_list.extend(cluster_data.get('labels', []))
     
     df_sampled = pd.DataFrame({
         'cluster_id': all_cluster_ids,
@@ -442,7 +626,7 @@ def save_clustered_data(clusters, cluster_labels, sentences, labels=None, output
     })
     
     if labels is not None:
-        df_sampled['label'] = all_labels
+        df_sampled['label'] = all_labels_list
     
     csv_path = os.path.join(output_dir, f"{filename}.csv")
     df_sampled.to_csv(csv_path, index=False)
@@ -465,6 +649,7 @@ def save_clustered_data(clusters, cluster_labels, sentences, labels=None, output
         'n_clusters': len(clusters),
         'total_samples': len(sentences),
         'sampled_samples': len(all_sampled_sentences),
+        'label_group': label_group,
         'clusters': {
             str(k): {
                 'cluster_id': v['cluster_id'],
@@ -502,12 +687,35 @@ Examples:
       --output-dir sampled_data \\
       --n-examples 10
 
+  # Resample from existing clusters (no re-clustering)
+  python cluster_and_sample.py \\
+      --dataset german-credit-data \\
+      --output-dir sampled_data \\
+      --n-examples 20 \\
+      --resample-only
+
 Note: This script:
   1. Reads data from processed_data/{dataset_name}.csv
   2. Loads best_model from models/{dataset_name}/
-  3. Generates z_d embeddings
-  4. Clusters based on z_d
-  5. Finds optimal K and samples n examples from each cluster
+  3. Generates z_d embeddings (unless --resample-only)
+  4. Splits data into two groups based on labels (0 and 1)
+  5. For each group, clusters based on z_d and finds optimal K (unless --resample-only)
+  6. For each group, samples n examples from each cluster
+  7. Saves cluster info to {output_dir}/{dataset}/clusters/ for future resampling
+  8. Saves combined results to {output_dir}/{dataset}/{timestamp}_{n_examples}/
+
+Output structure:
+  {output_dir}/{dataset}/
+    clusters/
+      label_0/
+        cluster_info.json
+        cluster_assignments.npy
+      label_1/
+        cluster_info.json
+        cluster_assignments.npy
+    {timestamp}_{n_examples}/
+      sampled_sentences_combined.csv
+      sampled_sentences_combined_metadata.json
         """
     )
     
@@ -572,6 +780,12 @@ Note: This script:
         default=42,
         help="Random seed for reproducibility (default: 42)"
     )
+    parser.add_argument(
+        "--resample-only",
+        action="store_true",
+        help="Only resample from existing clusters without re-clustering. "
+             "Requires cluster info to exist in {output_dir}/{dataset}/clusters/"
+    )
     
     args = parser.parse_args()
     
@@ -582,171 +796,382 @@ Note: This script:
     print("  1. Reads data from processed_data/{dataset}.csv")
     print("  2. Loads best_model from models/{dataset}/")
     print("  3. Generates z_d embeddings")
-    print("  4. Clusters based on z_d")
-    print("  5. Finds optimal K and samples n examples from each cluster")
+    print("  4. Splits data into two groups based on labels (0 and 1)")
+    print("  5. For each group, clusters based on z_d and finds optimal K")
+    print("  6. For each group, samples n examples from each cluster")
     print("="*70)
-    
-    if not EMBED_AVAILABLE:
-        raise ImportError("Cannot import embed_data. Please install dependencies.")
-    
-    # Find or use provided model path
-    if args.model_path is None:
-        print(f"\nAuto-finding best_model for dataset: {args.dataset}")
-        model_path = find_best_model_path(args.dataset)
-        if model_path is None:
-            raise FileNotFoundError(
-                f"Could not find a valid model for dataset '{args.dataset}'.\n"
-                f"Looked in: models/{args.dataset}/\n"
-                f"Tried: best_model_*.pth and final_model_*.pth\n"
-                f"Please specify --model-path or ensure a valid model exists.\n"
-                f"If models are corrupted, you may need to retrain."
-            )
-        print(f"✓ Found model: {model_path}")
-    else:
-        model_path = args.model_path
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-        
-        # Verify the model file is not corrupted
-        try:
-            import torch
-            torch.load(model_path, map_location='cpu', weights_only=False)
-            print(f"✓ Model file verified: {model_path}")
-        except (RuntimeError, Exception) as e:
-            if "failed finding central directory" in str(e) or "zip archive" in str(e):
-                # Try to find alternative model files in the same directory
-                model_dir = os.path.dirname(model_path)
-                dataset_name = os.path.basename(model_dir)
-                print(f"\n⚠ Provided model file is corrupted: {model_path}")
-                print(f"  Error: {e}")
-                print(f"  Attempting to find alternative model files...")
-                
-                # Try to find best_model or final_model in the same directory
-                import glob
-                alt_patterns = [
-                    os.path.join(model_dir, "best_model_*.pth"),
-                    os.path.join(model_dir, "final_model_*.pth")
-                ]
-                
-                for pattern in alt_patterns:
-                    matches = glob.glob(pattern)
-                    if matches:
-                        # Try files in reverse chronological order
-                        for alt_path in sorted(matches, key=os.path.getmtime, reverse=True):
-                            try:
-                                torch.load(alt_path, map_location='cpu', weights_only=False)
-                                print(f"✓ Found alternative valid model: {alt_path}")
-                                model_path = alt_path
-                                break
-                            except Exception:
-                                continue
-                        if model_path != args.model_path:  # Found alternative
-                            break
-                
-                if model_path == args.model_path:  # No alternative found
-                    raise RuntimeError(
-                        f"Model file appears to be corrupted: {model_path}\n"
-                        f"Error: {e}\n"
-                        f"Please use a different model file or retrain the model."
-                    ) from e
-            else:
-                raise
-        
-        print(f"\nUsing model: {model_path}")
     
     # Load processed data
     print(f"\nLoading processed data for dataset: {args.dataset}")
     sentences, labels, df = load_processed_data(args.dataset)
     
-    # Load model
-    import torch
-    from embed_data import load_model
-    from components.utils import get_device
-    device = get_device()
-    print(f"\nLoading model on device: {device}")
-    model, model_info = load_model(model_path, device)
-    
-    # Generate z_d embeddings
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-    
-    print(f"\nGenerating z_d embeddings for {len(sentences)} sentences...")
-    z_c, z_d, attn_c, attn_d = embed_data(
-        model=model,
-        sentences=sentences,
-        tokenizer=tokenizer,
-        max_len=256,
-        batch_size=32,
-        use_cache=True,
-        dataset_name=f"{args.dataset}_clustering"
-    )
-    
-    print(f"✓ Generated z_d embeddings: shape {z_d.shape}")
-    
-    # Verify dimensions match
-    if len(sentences) != z_d.shape[0]:
-        raise ValueError(f"Mismatch: {len(sentences)} sentences but {z_d.shape[0]} embeddings")
-    
-    # Find optimal K if not specified
-    if args.k is None:
-        optimal_k, scores = find_optimal_k(
-            z_d, 
-            max_k=args.max_k, 
-            min_k=args.min_k,
-            method=args.method
-        )
-        k = optimal_k
-        
-        # Plot K selection metrics
-        output_dataset_dir = os.path.join(args.output_dir, args.dataset)
-        os.makedirs(output_dataset_dir, exist_ok=True)
-        plot_k_selection(scores, output_dataset_dir)
-        
-        # Save scores
-        scores_path = os.path.join(output_dataset_dir, f"{args.output_name}_k_scores.json")
-        with open(scores_path, 'w') as f:
-            json.dump(scores, f, indent=2)
-        print(f"✓ Saved K selection scores to: {scores_path}")
+    # In resample-only mode, skip model loading and embedding generation
+    if args.resample_only:
+        print(f"\nResample-only mode: Skipping model loading and embedding generation")
+        z_d = None  # Not needed in resample mode
     else:
-        k = args.k
-        print(f"\nUsing specified K={k}")
+        if not EMBED_AVAILABLE:
+            raise ImportError("Cannot import embed_data. Please install dependencies.")
+        
+        # Find or use provided model path
+        if args.model_path is None:
+            print(f"\nAuto-finding best_model for dataset: {args.dataset}")
+            model_path = find_best_model_path(args.dataset)
+            if model_path is None:
+                raise FileNotFoundError(
+                    f"Could not find a valid model for dataset '{args.dataset}'.\n"
+                    f"Looked in: models/{args.dataset}/\n"
+                    f"Tried: best_model_*.pth and final_model_*.pth\n"
+                    f"Please specify --model-path or ensure a valid model exists.\n"
+                    f"If models are corrupted, you may need to retrain."
+                )
+            print(f"✓ Found model: {model_path}")
+        else:
+            model_path = args.model_path
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+            
+            # Verify the model file is not corrupted
+            try:
+                import torch
+                torch.load(model_path, map_location='cpu', weights_only=False)
+                print(f"✓ Model file verified: {model_path}")
+            except (RuntimeError, Exception) as e:
+                if "failed finding central directory" in str(e) or "zip archive" in str(e):
+                    # Try to find alternative model files in the same directory
+                    model_dir = os.path.dirname(model_path)
+                    dataset_name = os.path.basename(model_dir)
+                    print(f"\n⚠ Provided model file is corrupted: {model_path}")
+                    print(f"  Error: {e}")
+                    print(f"  Attempting to find alternative model files...")
+                    
+                    # Try to find best_model or final_model in the same directory
+                    import glob
+                    alt_patterns = [
+                        os.path.join(model_dir, "best_model_*.pth"),
+                        os.path.join(model_dir, "final_model_*.pth")
+                    ]
+                    
+                    for pattern in alt_patterns:
+                        matches = glob.glob(pattern)
+                        if matches:
+                            # Try files in reverse chronological order
+                            for alt_path in sorted(matches, key=os.path.getmtime, reverse=True):
+                                try:
+                                    torch.load(alt_path, map_location='cpu', weights_only=False)
+                                    print(f"✓ Found alternative valid model: {alt_path}")
+                                    model_path = alt_path
+                                    break
+                                except Exception:
+                                    continue
+                            if model_path != args.model_path:  # Found alternative
+                                break
+                    
+                    if model_path == args.model_path:  # No alternative found
+                        raise RuntimeError(
+                            f"Model file appears to be corrupted: {model_path}\n"
+                            f"Error: {e}\n"
+                            f"Please use a different model file or retrain the model."
+                        ) from e
+                else:
+                    raise
+            
+            print(f"\nUsing model: {model_path}")
+        
+        # Load model
+        import torch
+        from embed_data import load_model
+        from components.utils import get_device
+        device = get_device()
+        print(f"\nLoading model on device: {device}")
+        model, model_info = load_model(model_path, device)
+        
+        # Generate z_d embeddings
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        
+        print(f"\nGenerating z_d embeddings for {len(sentences)} sentences...")
+        z_c, z_d, attn_c, attn_d = embed_data(
+            model=model,
+            sentences=sentences,
+            tokenizer=tokenizer,
+            max_len=256,
+            batch_size=32,
+            use_cache=True,
+            dataset_name=f"{args.dataset}_clustering"
+        )
+        
+        print(f"✓ Generated z_d embeddings: shape {z_d.shape}")
+        
+        # Verify dimensions match
+        if len(sentences) != z_d.shape[0]:
+            raise ValueError(f"Mismatch: {len(sentences)} sentences but {z_d.shape[0]} embeddings")
     
-    # Perform clustering and sampling on z_d
-    clusters, cluster_labels, kmeans = cluster_and_sample(
-        z_d=z_d,
-        sentences=sentences,
-        labels=labels,
-        k=k,
-        n_examples=args.n_examples,
-        random_state=args.random_state
-    )
+    # Check if labels are available
+    if labels is None:
+        raise ValueError("Labels are required for grouping by prediction. Please ensure the dataset has a 'label' column.")
     
-    # Save results
+    labels = np.array(labels)
+    unique_labels = np.unique(labels)
+    
+    if len(unique_labels) != 2 or not all(l in [0, 1] for l in unique_labels):
+        raise ValueError(f"Expected binary labels (0 and 1), but found: {unique_labels}")
+    
+    print(f"\n{'='*70}")
+    print("SPLITTING DATA BY LABELS")
+    print(f"{'='*70}")
+    print(f"Label distribution: {np.sum(labels == 0)} samples with label 0, {np.sum(labels == 1)} samples with label 1")
+    
+    # Split data by labels
+    label_0_indices = np.where(labels == 0)[0]
+    label_1_indices = np.where(labels == 1)[0]
+    
+    if args.resample_only:
+        z_d_0 = None
+        z_d_1 = None
+    else:
+        z_d_0 = z_d[label_0_indices]
+        z_d_1 = z_d[label_1_indices]
+    
+    sentences_0 = [sentences[i] for i in label_0_indices]
+    sentences_1 = [sentences[i] for i in label_1_indices]
+    labels_0 = labels[label_0_indices].tolist()
+    labels_1 = labels[label_1_indices].tolist()
+    
+    print(f"\nGroup 0: {len(sentences_0)} samples")
+    print(f"Group 1: {len(sentences_1)} samples")
+    
+    # Process each group separately
     output_dataset_dir = os.path.join(args.output_dir, args.dataset)
     os.makedirs(output_dataset_dir, exist_ok=True)
     
-    csv_path, csv_all_path, json_path = save_clustered_data(
-        clusters=clusters,
-        cluster_labels=cluster_labels,
-        sentences=sentences,
-        labels=labels,
-        output_dir=output_dataset_dir,
-        filename=args.output_name
-    )
+    # Directory for storing cluster info (for resampling later)
+    clusters_base_dir = os.path.join(output_dataset_dir, "clusters")
+    os.makedirs(clusters_base_dir, exist_ok=True)
+    
+    all_results = {}
+    
+    # Prepare data for processing
+    groups_data = [
+        (0, z_d_0, sentences_0, labels_0, "label_0"),
+        (1, z_d_1, sentences_1, labels_1, "label_1")
+    ]
+    
+    for label_value, z_d_group, sentences_group, labels_group, group_name in groups_data:
+        print(f"\n{'='*70}")
+        print(f"PROCESSING GROUP: Label {label_value} ({len(sentences_group)} samples)")
+        print(f"{'='*70}")
+        
+        # Directory for this label's cluster info
+        cluster_info_dir = os.path.join(clusters_base_dir, group_name)
+        
+        if args.resample_only:
+            # Load existing cluster info and resample
+            print(f"\nResampling mode: Loading existing cluster info for label {label_value}...")
+            cluster_labels, cluster_info = load_cluster_info(cluster_info_dir, label_value)
+            k = cluster_info['k']
+            
+            # Verify that cluster_labels length matches sentences_group length
+            if len(cluster_labels) != len(sentences_group):
+                raise ValueError(
+                    f"Mismatch: cluster_labels has {len(cluster_labels)} samples, "
+                    f"but sentences_group has {len(sentences_group)} samples. "
+                    f"Please ensure you're using the same dataset."
+                )
+            
+            # Resample from existing clusters
+            clusters = resample_from_clusters(
+                cluster_labels=cluster_labels,
+                sentences=sentences_group,
+                labels=labels_group,
+                n_examples=args.n_examples,
+                random_state=args.random_state,
+                label_group=label_value
+            )
+            
+            # Create a dummy kmeans object for compatibility (not used in resample mode)
+            from sklearn.cluster import KMeans
+            kmeans = KMeans(n_clusters=k)
+            kmeans.cluster_centers_ = np.array(cluster_info['cluster_centers'])
+        else:
+            # Find optimal K for this group if not specified
+            if args.k is None:
+                print(f"\nFinding optimal K for label {label_value}...")
+                optimal_k, scores = find_optimal_k(
+                    z_d_group, 
+                    max_k=args.max_k, 
+                    min_k=args.min_k,
+                    method=args.method
+                )
+                k = optimal_k
+                
+                # Plot K selection metrics for this group
+                group_output_dir = os.path.join(output_dataset_dir, group_name)
+                os.makedirs(group_output_dir, exist_ok=True)
+                plot_k_selection(scores, group_output_dir)
+                
+                # Save scores for this group
+                scores_path = os.path.join(group_output_dir, f"{args.output_name}_k_scores.json")
+                with open(scores_path, 'w') as f:
+                    json.dump(scores, f, indent=2)
+                print(f"✓ Saved K selection scores to: {scores_path}")
+            else:
+                k = args.k
+                print(f"\nUsing specified K={k} for label {label_value}")
+            
+            # Perform clustering and sampling on z_d for this group
+            clusters, cluster_labels, kmeans = cluster_and_sample(
+                z_d=z_d_group,
+                sentences=sentences_group,
+                labels=labels_group,
+                k=k,
+                n_examples=args.n_examples,
+                random_state=args.random_state,
+                label_group=label_value
+            )
+            
+            # Save cluster info for future resampling
+            print(f"\nSaving cluster info for future resampling...")
+            save_cluster_info(
+                cluster_labels=cluster_labels,
+                k=k,
+                kmeans=kmeans,
+                output_dir=cluster_info_dir,
+                label_group=label_value
+            )
+            
+            # Save results for this group (legacy format for backward compatibility)
+            group_output_dir = os.path.join(output_dataset_dir, group_name)
+            os.makedirs(group_output_dir, exist_ok=True)
+            
+            csv_path, csv_all_path, json_path = save_clustered_data(
+                clusters=clusters,
+                cluster_labels=cluster_labels,
+                sentences=sentences_group,
+                labels=labels_group,
+                output_dir=group_output_dir,
+                filename=args.output_name,
+                label_group=label_value
+            )
+        
+        all_results[label_value] = {
+            'clusters': clusters,
+            'cluster_labels': cluster_labels,
+            'sentences': sentences_group,
+            'labels': labels_group,
+            'k': k,
+            'output_dir': os.path.join(output_dataset_dir, group_name)
+        }
+    
+    # Also save combined results in timestamp_n_samples folder
+    print(f"\n{'='*70}")
+    print("SAVING COMBINED RESULTS")
+    print(f"{'='*70}")
+    
+    # Create timestamp folder for combined results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    combined_output_dir = os.path.join(output_dataset_dir, f"{timestamp}_{args.n_examples}")
+    os.makedirs(combined_output_dir, exist_ok=True)
+    print(f"Combined results will be saved to: {combined_output_dir}/")
+    
+    # Combine all sampled sentences from both groups
+    all_sampled_sentences = []
+    all_cluster_ids = []
+    all_original_indices = []
+    all_labels_combined = []
+    all_label_groups = []
+    
+    for label_value, results in all_results.items():
+        clusters = results['clusters']
+        original_indices_base = label_0_indices if label_value == 0 else label_1_indices
+        
+        for cluster_id, cluster_data in clusters.items():
+            # Map back to original indices
+            cluster_original_indices = [original_indices_base[i] for i in cluster_data['indices']]
+            
+            all_sampled_sentences.extend(cluster_data['sentences'])
+            all_cluster_ids.extend([f"label_{label_value}_cluster_{cluster_id}"] * len(cluster_data['sentences']))
+            all_original_indices.extend(cluster_original_indices)
+            all_labels_combined.extend(cluster_data.get('labels', [label_value] * len(cluster_data['sentences'])))
+            all_label_groups.extend([label_value] * len(cluster_data['sentences']))
+    
+    # Save combined CSV
+    df_combined = pd.DataFrame({
+        'label_group': all_label_groups,
+        'cluster_id': all_cluster_ids,
+        'original_index': all_original_indices,
+        'sentence': all_sampled_sentences,
+        'label': all_labels_combined
+    })
+    
+    combined_csv_path = os.path.join(combined_output_dir, f"{args.output_name}_combined.csv")
+    df_combined.to_csv(combined_csv_path, index=False)
+    print(f"✓ Saved combined sampled sentences to: {combined_csv_path}")
+    
+    # Save combined metadata
+    combined_metadata = {
+        'timestamp': timestamp,
+        'n_examples_per_cluster': args.n_examples,
+        'random_state': args.random_state,
+        'resample_only': args.resample_only,
+        'label_0': {
+            'n_clusters': len(all_results[0]['clusters']),
+            'optimal_k': all_results[0]['k'],
+            'total_samples': len(all_results[0]['sentences']),
+            'sampled_samples': sum(c['n_sampled'] for c in all_results[0]['clusters'].values())
+        },
+        'label_1': {
+            'n_clusters': len(all_results[1]['clusters']),
+            'optimal_k': all_results[1]['k'],
+            'total_samples': len(all_results[1]['sentences']),
+            'sampled_samples': sum(c['n_sampled'] for c in all_results[1]['clusters'].values())
+        }
+    }
+    
+    combined_metadata_path = os.path.join(combined_output_dir, f"{args.output_name}_combined_metadata.json")
+    with open(combined_metadata_path, 'w') as f:
+        json.dump(combined_metadata, f, indent=2)
+    print(f"✓ Saved combined metadata to: {combined_metadata_path}")
     
     print(f"\n{'='*70}")
     print("CLUSTERING AND SAMPLING COMPLETE!")
     print(f"{'='*70}")
     print(f"\nOutput files saved to: {output_dataset_dir}/")
-    print(f"  - {args.output_name}.csv (Sampled sentences from each cluster)")
-    print(f"  - {args.output_name}_all_clusters.csv (All sentences with cluster assignments)")
-    print(f"  - {args.output_name}_metadata.json (Cluster metadata)")
-    if args.k is None:
-        print(f"  - {args.output_name}_k_scores.json (K selection scores)")
-        print(f"  - k_selection_metrics.png (K selection plots)")
-    print(f"\nCluster summary (clustered on z_d embeddings):")
-    for cluster_id, cluster_data in sorted(clusters.items()):
-        print(f"  Cluster {cluster_id}: {cluster_data['cluster_size']} samples, {cluster_data['n_sampled']} sampled")
+    
+    if not args.resample_only:
+        print(f"\nCluster info (for future resampling):")
+        print(f"  - {clusters_base_dir}/label_0/cluster_info.json")
+        print(f"  - {clusters_base_dir}/label_0/cluster_assignments.npy")
+        print(f"  - {clusters_base_dir}/label_1/cluster_info.json")
+        print(f"  - {clusters_base_dir}/label_1/cluster_assignments.npy")
+        print(f"\n  To resample later, use: --resample-only flag")
+    
+    if not args.resample_only:
+        print(f"\nGroup 0 (label=0) files:")
+        print(f"  - {output_dataset_dir}/label_0/{args.output_name}.csv")
+        print(f"  - {output_dataset_dir}/label_0/{args.output_name}_all_clusters.csv")
+        print(f"  - {output_dataset_dir}/label_0/{args.output_name}_metadata.json")
+        if args.k is None:
+            print(f"  - {output_dataset_dir}/label_0/{args.output_name}_k_scores.json")
+            print(f"  - {output_dataset_dir}/label_0/k_selection_metrics.png")
+        print(f"\nGroup 1 (label=1) files:")
+        print(f"  - {output_dataset_dir}/label_1/{args.output_name}.csv")
+        print(f"  - {output_dataset_dir}/label_1/{args.output_name}_all_clusters.csv")
+        print(f"  - {output_dataset_dir}/label_1/{args.output_name}_metadata.json")
+        if args.k is None:
+            print(f"  - {output_dataset_dir}/label_1/{args.output_name}_k_scores.json")
+            print(f"  - {output_dataset_dir}/label_1/k_selection_metrics.png")
+    
+    print(f"\nCombined results (timestamp folder):")
+    print(f"  - {combined_output_dir}/{args.output_name}_combined.csv")
+    print(f"  - {combined_output_dir}/{args.output_name}_combined_metadata.json")
+    
+    print(f"\nCluster summary:")
+    for label_value in [0, 1]:
+        results = all_results[label_value]
+        print(f"\n  Label {label_value} (K={results['k']}):")
+        for cluster_id, cluster_data in sorted(results['clusters'].items()):
+            print(f"    Cluster {cluster_id}: {cluster_data['cluster_size']} samples, {cluster_data['n_sampled']} sampled")
     print(f"{'='*70}\n")
 
 

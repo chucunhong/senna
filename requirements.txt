@@ -3,6 +3,11 @@ torch>=2.0.0
 transformers>=4.30.0
 safetensors>=0.4.0
 
+# API clients
+openai>=1.0.0
+google-genai>=0.2.0
+python-dotenv>=1.0.0
+
 # Data processing
 pandas>=1.5.0
 numpy>=1.23.0
