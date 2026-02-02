@@ -87,6 +87,10 @@ def demographic_parity(y_pred: np.ndarray, sensitive_attr: np.ndarray,
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays if they aren't already
+    y_pred = np.array(y_pred)
+    sensitive_attr = np.array(sensitive_attr)
+    
     # Convert to binary if needed
     if y_pred.dtype == float and np.any((y_pred > 1) | (y_pred < 0)):
         y_pred_binary = (y_pred >= threshold).astype(int)
@@ -142,6 +146,11 @@ def equalized_odds(y_true: np.ndarray, y_pred: np.ndarray, sensitive_attr: np.nd
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    sensitive_attr = np.array(sensitive_attr)
+    
     # Convert to binary if needed
     if y_pred.dtype == float and np.any((y_pred > 1) | (y_pred < 0)):
         y_pred_binary = (y_pred >= threshold).astype(int)
@@ -208,6 +217,11 @@ def equal_opportunity(y_true: np.ndarray, y_pred: np.ndarray, sensitive_attr: np
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    sensitive_attr = np.array(sensitive_attr)
+    
     # Convert to binary if needed
     if y_pred.dtype == float and np.any((y_pred > 1) | (y_pred < 0)):
         y_pred_binary = (y_pred >= threshold).astype(int)
@@ -266,6 +280,10 @@ def disparate_impact(y_pred: np.ndarray, sensitive_attr: np.ndarray,
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays
+    y_pred = np.array(y_pred)
+    sensitive_attr = np.array(sensitive_attr)
+    
     # Convert to binary if needed
     if y_pred.dtype == float and np.any((y_pred > 1) | (y_pred < 0)):
         y_pred_binary = (y_pred >= threshold).astype(int)
@@ -321,6 +339,11 @@ def calibration(y_true: np.ndarray, y_pred_proba: np.ndarray, sensitive_attr: np
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays
+    y_true = np.array(y_true)
+    y_pred_proba = np.array(y_pred_proba)
+    sensitive_attr = np.array(sensitive_attr)
+    
     y_true = y_true.astype(int)
     
     group_0_mask = sensitive_attr == 0
@@ -388,6 +411,11 @@ def accuracy_parity(y_true: np.ndarray, y_pred: np.ndarray, sensitive_attr: np.n
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    sensitive_attr = np.array(sensitive_attr)
+    
     # Convert to binary if needed
     if y_pred.dtype == float and np.any((y_pred > 1) | (y_pred < 0)):
         y_pred_binary = (y_pred >= threshold).astype(int)
@@ -439,6 +467,10 @@ def individual_fairness_score(features: np.ndarray, y_pred: np.ndarray,
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays
+    features = np.array(features)
+    y_pred = np.array(y_pred)
+    
     if len(features) < k + 1:
         return {
             'individual_fairness': np.nan,
@@ -500,6 +532,11 @@ def treatment_equality(y_true: np.ndarray, y_pred: np.ndarray, sensitive_attr: n
     Returns:
         Dictionary with metrics
     """
+    # Convert inputs to numpy arrays
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    sensitive_attr = np.array(sensitive_attr)
+    
     # Convert to binary if needed
     if y_pred.dtype == float and np.any((y_pred > 1) | (y_pred < 0)):
         y_pred_binary = (y_pred >= threshold).astype(int)
@@ -612,6 +649,12 @@ def evaluate_fairness_comprehensive(
     if synthetic_predictions is None:
         synthetic_predictions = synthetic_labels
     
+    # Convert to numpy arrays if they aren't already
+    original_labels = np.array(original_labels)
+    synthetic_labels = np.array(synthetic_labels)
+    original_predictions = np.array(original_predictions)
+    synthetic_predictions = np.array(synthetic_predictions)
+    
     # Group Fairness Metrics
     print("\n" + "="*70)
     print("GROUP FAIRNESS METRICS")
@@ -713,6 +756,11 @@ def evaluate_fairness_comprehensive(
                 if key in synthetic_metric:
                     orig_val = original_metric[key]
                     synth_val = synthetic_metric[key]
+                    
+                    # Skip boolean values or non-numeric types
+                    if isinstance(orig_val, (bool, np.bool_)) or isinstance(synth_val, (bool, np.bool_)):
+                        continue
+                        
                     if not (np.isnan(orig_val) or np.isnan(synth_val)):
                         comparison[key] = {
                             'original': orig_val,
@@ -830,6 +878,8 @@ def save_fairness_report(results: Dict[str, Dict], output_path: str, dataset_nam
             return obj.tolist()
         elif isinstance(obj, (np.integer, np.floating)):
             return float(obj) if isinstance(obj, np.floating) else int(obj)
+        elif isinstance(obj, (bool, np.bool_)):
+            return bool(obj)
         elif isinstance(obj, dict):
             return {k: convert_to_serializable(v) for k, v in obj.items()}
         elif isinstance(obj, list):

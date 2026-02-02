@@ -210,10 +210,10 @@ if __name__ == "__main__":
             elif gpu_memory_gb >= 10:  # RTX 3080, etc. (10-20GB)
                 args.batch_size = 16
             else:  # Smaller GPUs (<10GB)
-                args.batch_size = 8
+                args.batch_size = 32
             print(f"Auto-detected batch size: {args.batch_size} (GPU memory: {gpu_memory_gb:.1f}GB)")
         else:
-            args.batch_size = 8
+            args.batch_size = 64
             print(f"Using CPU batch size: {args.batch_size}")
     
     model, history = train_cd_model(
@@ -277,8 +277,25 @@ if __name__ == "__main__":
     stats = analyze_attention_difference(model, analysis_dataloader, num_samples=args.visualize_samples, save_dir=vis_dir)
     
     print(f"\n📊 Visualizing latent space with PCA...")
+    
+    # Load best model for visualization (instead of using last epoch model)
+    import glob
+    model_dir = f"models/{args.dataset}"
+    model_files = glob.glob(os.path.join(model_dir, "best_model_*.pth"))
+    if model_files:
+        best_model_path = max(model_files, key=os.path.getmtime)
+        print(f"  Loading best model for visualization: {best_model_path}")
+        checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+        print(f"  ✓ Loaded best model from epoch {checkpoint.get('epoch', 'unknown')}")
+        print(f"    Loss: {checkpoint.get('loss', 'unknown'):.4f}, Acc(z_c): {checkpoint.get('acc_z_c', 'unknown'):.3f}")
+    else:
+        print(f"  ⚠ No best model found, using current model state")
+    
     full_dataloader = DataLoader(full_dataset, batch_size=32, shuffle=False)
     latent_stats = visualize_latent_space_pca(model, full_dataloader, num_samples=None, save_dir=vis_dir)
+
     
     # NEW: Visualize attention on text with HTML highlighting
     print(f"\n📊 Generating attention visualization on text (HTML)...")

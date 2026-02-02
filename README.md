@@ -285,22 +285,23 @@ python generate_synthetic_data.py \
 
 ---
 
-### Bước 4: Embed Synthetic Data để tính Fairness
+### Bước 4: Phát sinh dữ liệu tích hợp tính năng Công bằng (Fairness)
 
-Embed synthetic data thành `z_c` và `z_d` representations để phân tích fairness.
+Sử dụng tham số `--fair` để kích hoạt các tính năng công bằng nâng cao như Fairness Governor, nhắm mục tiêu ICL, và kiểm định phản thực tế (counterfactual).
 
 ```bash
-   python embed_data.py \
-    --model-path models/german-credit-data/best_model_20260129_111450.pth \
-    --input-data synthetic_data.json \
-       --output-dir embeddings/synthetic
+python generate_synthetic_data_gemini.py \
+    --dataset german-credit-data \
+    --csv-file sampled_data/german-credit-data/label_0_data.csv \
+    --n-examples 100 \
+    --fair \
+    --sensitive-attrs sex
 ```
 
-**Output**:
-- `embeddings/synthetic/z_c.npy`: Content representations
-- `embeddings/synthetic/z_d.npy`: Demographic representations
-- `embeddings/synthetic/labels.npy`: Labels
-- `embeddings/synthetic/summary.json`: Metadata
+**Tính năng nổi bật**:
+- **Fairness Governor**: Tự động cân bằng tỉ lệ giữa các nhóm (VD: 25% cho mỗi tổ hợp Nhãn x Giới tính).
+- **Targeted Prompting**: Tự động chỉ định LLM tập trung vào các nhóm đang thiếu hụt trong tập dữ liệu.
+- **Counterfactual Validation**: Kiểm tra tính ổn định của quyết định khi thay đổi thuộc tính nhạy cảm.
 
 ---
 
@@ -320,6 +321,16 @@ Embed synthetic data thành `z_c` và `z_d` representations để phân tích fa
 | `--batch-size` | Auto | Batch size (auto-detect based on GPU) |
 | `--epochs` | 100 | Số epochs training |
 | `--lr` | 2e-5 | Learning rate |
+
+### Generation & Fairness Parameters (`generate_synthetic_data_gemini.py`)
+
+| Parameter | Default | Mô tả |
+|-----------|---------|-------|
+| `--n-examples` | 1 | Số lượng mẫu cần phát sinh |
+| `--fair` | False | Kích hoạt tính năng công bằng nâng cao |
+| `--sensitive-attrs` | "sex" | Các thuộc tính cần cân bằng (phân cách bởi dấu phẩy) |
+| `--k-neighbors` | 9 | Số láng giềng k-NN để kiểm định nhãn |
+| `--visualize` | False | Tạo visualization PCA 2D cho z_c và z_d |
 
 ### Clustering Parameters (`cluster_and_sample.py`)
 
@@ -343,26 +354,21 @@ Embed synthetic data thành `z_c` và `z_d` representations để phân tích fa
 
 ---
 
-## 📊 Expected Results
+## 📊 Expected Results (Kỳ vọng kết quả)
 
-### Training Metrics
+### Disentanglement Metrics
+- **Task Accuracy (z_c → y)**: ~0.85-0.95 (Chất lượng nội dung cao)
+- **Adversarial Accuracy (z_d → y)**: ~0.45-0.55 (Thông tin nhạy cảm được tách rời hoàn toàn)
+- **HSIC(z_d, y) & HSIC(z_c, z_d)**: < 0.01 (Tính độc lập thống kê cao)
 
-- **Task Accuracy (z_c → y)**: ~0.85-0.95 (cao)
-- **Adversarial Accuracy (z_d → y)**: ~0.45-0.55 (gần random)
-- **HSIC(z_d, y)**: < 0.01 (gần 0, independent)
-- **HSIC(z_c, z_d)**: < 0.01 (gần 0, disentangled)
-- **Reconstruction MSE**: < 0.1 (thấp)
-
-### Model Behavior
-
-- **z_c**: Chứa task-relevant information, có thể predict label tốt
-- **z_d**: Chứa demographic/background information, độc lập với label
-- **z_c ⊥ z_d**: Statistically independent (HSIC ≈ 0)
-- **Reconstruction**: `D_c(z_c) + D_d(z_d)` ≈ original BERT embeddings
+### Fairness Metrics (with `--fair`)
+- **Statistical Parity Difference**: Giảm đáng kể nhờ Fairness Governor.
+- **Disparate Impact Ratio**: Tiệm cận 1.0 (Công bằng tối ưu).
+- **Counterfactual Stability**: > 95% mẫu giữ nguyên nhãn khi đổi thuộc tính nhạy cảm.
 
 ---
 
-## 🔧 Requirements
+##  Requirements
 
 Xem `requirements.txt` để biết danh sách dependencies.
 
@@ -380,7 +386,6 @@ Xem `requirements.txt` để biết danh sách dependencies.
 1. **VAE vs Adversarial**: Framework này sử dụng HSIC-based LIRD, không dùng adversarial training với GRL
 2. **ICL Examples**: Tất cả examples trong CSV file được dùng làm in-context examples (không giới hạn)
 3. **Model Selection**: Có thể dùng bất kỳ Hugging Face model nào hỗ trợ chat format
-4. **Fairness Analysis**: Sau khi có embeddings, có thể tính các fairness metrics (demographic parity, equalized odds, etc.)
 
 ---
 
@@ -391,4 +396,11 @@ Xem `requirements.txt` để biết danh sách dependencies.
 - VAE: Variational Autoencoder
 
 
-python generate_synthetic_data_gemini.py --dataset german-credit-data --csv-file sampled_data/german-credit-data/20260130_111716_10/sampled_sentences_combined.csv --n-examples 100 --model gemini-3.0-flash
+python generate_synthetic_data_gemini.py --dataset german-credit-data --csv-file sampled_data/german-credit-data/20260202_052247_20/sampled_sentences_combined.csv --n-examples 100 --model gemini-3-flash-preview  --visualize
+
+python generate_synthetic_data_gemini.py \
+    --dataset german-credit-data \
+    --csv-file sampled_data/german-credit-data/20260202_052247_20/sampled_sentences_combined.csv \
+    --n-examples 100 \
+    --fair \
+    --sensitive-attrs sex

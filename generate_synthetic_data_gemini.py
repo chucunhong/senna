@@ -18,9 +18,138 @@ import pandas as pd
 import json
 import os
 import numpy as np
-from typing import List, Dict, Optional
+import threading
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+import concurrent.futures
 from prompts import prompts
+
+class FairnessGovernor:
+    """
+    Tracks and manages the balance of synthetic samples across multiple protected attributes.
+    """
+    def __init__(self, target_count: int, sensitive_attrs: List[str], dataset_name: str):
+        self.target_count = target_count
+        self.sensitive_attrs = [attr.strip().lower() for attr in sensitive_attrs]
+        self.dataset_name = dataset_name
+        self.counts = {}  # Map of "attr1:val1,attr2:val2" -> count
+        self.samples = []
+    
+    def get_group_key(self, entry: Dict) -> str:
+        """Generate a unique key for the demographic group (including label) of an entry."""
+        key_parts = []
+        # Standardize label field name
+        label = entry.get('class-label', entry.get('label', 'unknown'))
+        key_parts.append(f"label:{label}")
+        
+        for attr in self.sensitive_attrs:
+            val = str(entry.get(attr, "unknown")).lower().strip()
+            key_parts.append(f"{attr}:{val}")
+        return ",".join(key_parts)
+
+    def update(self, entries: List[Dict]):
+        """Update counts with new valid samples."""
+        for entry in entries:
+            key = self.get_group_key(entry)
+            self.counts[key] = self.counts.get(key, 0) + 1
+            self.samples.append(entry)
+    
+    def get_shortfall_report(self) -> str:
+        """Returns a string describing current distribution."""
+        if not self.sensitive_attrs:
+            label_counts = {}
+            for s in self.samples:
+                l = s.get('class-label', s.get('label', 'unknown'))
+                label_counts[l] = label_counts.get(l, 0) + 1
+            return f"Label distribution: {label_counts}"
+        
+        report = "Group distribution (Label + Sensitive):"
+        sorted_keys = sorted(self.counts.keys())
+        for key in sorted_keys:
+            report += f"\n    - {key}: {self.counts[key]}"
+        return report
+    
+    def get_sampling_targets(self, n_to_generate: int) -> str:
+        """
+        Produce a natural language instruction for the LLM to fill the most needed groups.
+        """
+        if not self.sensitive_attrs:
+            return ""
+            
+        # Target labels
+        labels = [0, 1]
+        
+        # Try to guess values for sensitive attrs if not seen yet
+        # For german-credit-data, we know common ones
+        attr_values = {
+            'sex': ['male', 'female'],
+            'gender': ['male', 'female'],
+            'age': ['young', 'old'] # Simplified for instruction
+        }
+        
+        # Identify absolute missing groups first
+        missing_groups = []
+        for l in labels:
+            for attr in self.sensitive_attrs:
+                vals = attr_values.get(attr, ['unknown'])
+                for v in vals:
+                    key = f"label:{l},{attr}:{v}"
+                    # Check if this group or a similar one is missing
+                    # (Filtering the keys is more robust but more complex)
+                    if not any(k.startswith(f"label:{l}") and f"{attr}:{v}" in k for k in self.counts.keys()):
+                        missing_groups.append(key)
+        
+        if missing_groups:
+            return f"Focus on generating samples for these missing groups: {', '.join(missing_groups[:3])}."
+            
+        if not self.counts:
+            return "Ensure a balanced mix of labels (0 and 1) and demographic groups (sex, age, etc.)."
+            
+        min_count = min(self.counts.values())
+        neediest_groups = [k for k, v in self.counts.items() if v == min_count]
+        
+        target_instr = f"Focus on generating more samples for these underrepresented groups: {', '.join(neediest_groups[:3])}."
+        return target_instr
+
+    def balance_dataset(self, samples: List[Dict], target_total: int) -> List[Dict]:
+        """
+        Trim the dataset to match target_total while maximizing balance.
+        """
+        if not samples:
+            return []
+            
+        # Group samples by their group key
+        grouped_samples = {}
+        for s in samples:
+            key = self.get_group_key(s)
+            if key not in grouped_samples:
+                grouped_samples[key] = []
+            grouped_samples[key].append(s)
+            
+        n_groups = len(grouped_samples)
+        if n_groups == 0:
+            return samples[:target_total]
+            
+        target_per_group = target_total // n_groups
+        balanced_samples = []
+        
+        # First pass: take up to target_per_group from each
+        remaining_slots = target_total
+        over_samples = []
+        
+        for key in sorted(grouped_samples.keys()):
+            subset = grouped_samples[key]
+            take = min(len(subset), target_per_group)
+            balanced_samples.extend(subset[:take])
+            remaining_slots -= take
+            if len(subset) > take:
+                over_samples.extend(subset[take:])
+                
+        # Second pass: fill remaining slots from over_samples if any
+        if remaining_slots > 0 and over_samples:
+            balanced_samples.extend(over_samples[:remaining_slots])
+            
+        return balanced_samples
 
 
 def convert_to_original_csv_format(combined_data: List[Dict], dataset_name: str) -> pd.DataFrame:
@@ -69,20 +198,23 @@ def convert_to_original_csv_format(combined_data: List[Dict], dataset_name: str)
 
 # Try to import Google Generative AI SDK
 try:
-    from google import genai
+    try:
+        from google import genai
+    except (ImportError, AttributeError):
+        import google.genai as genai
     from dotenv import load_dotenv
     GEMINI_AVAILABLE = True
-except ImportError:
+except Exception as e:
     GEMINI_AVAILABLE = False
-    print("⚠ Warning: google-genai or python-dotenv package not installed.")
-    print("Install with: pip install google-genai python-dotenv")
+    print(f"⚠ Warning: google-genai or python-dotenv import failed: {e}")
+    print("Please ensure you have installed the correct package: pip install google-genai python-dotenv")
 
 # Load environment variables from .env file
 if GEMINI_AVAILABLE:
     load_dotenv()
 
 
-def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 42, dataset_name: str = None) -> str:
+def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 42, dataset_name: str = None, filter_dict: Dict = None) -> str:
     """
     Load ALL in-context examples from CSV file with optional shuffling.
     Formats examples according to the template in prompts.py, including label description.
@@ -92,6 +224,7 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
         shuffle: Whether to shuffle the data before sampling (default: True)
         random_state: Random seed for shuffling (default: 42)
         dataset_name: Name of dataset (e.g., 'german-credit-data', 'adult') for label formatting
+        filter_dict: Dictionary of {col: val} to filter examples by
     
     Returns:
         Formatted string of examples with labels (all examples from file)
@@ -126,13 +259,44 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
     
     df = pd.read_csv(csv_path)
     
-    # Shuffle if requested
-    if shuffle:
-        print(f"Shuffling data with random_state={random_state}...")
-        df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
-        print(f"✓ Data shuffled")
+    # NEW: Filter by specific group if requested
+    if filter_dict:
+        df_filtered = df.copy()
+        for col, val in filter_dict.items():
+            if col in df_filtered.columns:
+                # Robust match: convert column to string for comparison
+                df_filtered = df_filtered[df_filtered[col].astype(str).str.lower() == str(val).lower()]
+        
+        if len(df_filtered) > 0:
+            df = df_filtered
+            print(f"✓ Filtered ICL: {len(df)} samples matching {filter_dict}")
+        else:
+            print(f"⚠ Filtered ICL: 0 samples matching {filter_dict}. Falling back to balanced sampling.")
+
+    # NEW: Balanced ICL Sampling for Fairness
+    if shuffle and not filter_dict:
+        print(f"Sampling balanced ICL examples (50/50 label split if possible)...")
+        label_col = 'label' if 'label' in df.columns else ('class-label' if 'class-label' in df.columns else None)
+        
+        if label_col:
+            df_0 = df[df[label_col].astype(str).isin(['0', '0.0', 'bad credit risk', 'income <=50K'])]
+            df_1 = df[df[label_col].astype(str).isin(['1', '1.0', 'good credit risk', 'income >50K'])]
+            
+            min_size = min(len(df_0), len(df_1))
+            if min_size > 0:
+                df_0_sampled = df_0.sample(n=min_size, random_state=random_state)
+                df_1_sampled = df_1.sample(n=min_size, random_state=random_state)
+                df = pd.concat([df_0_sampled, df_1_sampled]).sample(frac=1, random_state=random_state)
+                print(f"✓ Balanced ICL: {len(df)} samples ({min_size} for each label)")
+            else:
+                print(f"⚠ Could not balance ICL: one label group is empty. Using all available.")
+                df = df.sample(frac=1, random_state=random_state)
+        else:
+            print(f"Shuffling data with random_state={random_state}...")
+            df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+            print(f"✓ Data shuffled")
     
-    # Use all examples from file
+    # Use all examples from balanced/shuffled set
     df_sample = df
     
     # Format examples with labels according to template
@@ -156,9 +320,9 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
         if not already_has_label_desc and dataset_name and label is not None:
             if dataset_name == 'german-credit-data':
                 # Format: "The credit application has been evaluated and the decision is {label_description}."
-                if label == 0 or str(label).strip() == '0':
+                if label == 1 or str(label).strip() == '1':
                     label_desc = "good credit risk"
-                elif label == 1 or str(label).strip() == '1':
+                elif label == 0 or str(label).strip() == '0':
                     label_desc = "bad credit risk"
                 else:
                     label_desc = f"label {label}"
@@ -312,7 +476,7 @@ def save_label_data(csv_path: str, dataset_name: str, output_dir: str = None):
     return label_0_file, label_1_file
 
 
-def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2) -> tuple:
+def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2, fair: bool = False, fairness_instruction: str = "") -> tuple:
     """
     Format prompt with in-context examples for chat format.
     
@@ -320,6 +484,8 @@ def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2) -> t
         dataset_name: Name of dataset (e.g., 'german-credit-data')
         icl_examples: In-context examples as formatted string
         n_samples: Number of samples to generate (for template formatting)
+        fair: Whether to include fairness-specific instructions
+        fairness_instruction: Additional targeted instruction from Governor
     
     Returns:
         Tuple of (system_message, user_message) for chat format
@@ -342,6 +508,17 @@ def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2) -> t
     
     # System message is everything after "System role:" until "User instructions:"
     system_message = user_parts[0].strip()
+    
+    # Inject fairness instructions if enabled
+    if fair:
+        fairness_instr = (
+            "\n    IMPORTANT: Ensure the generated decisions are fair and base decisions strictly on financial/merit criteria. "
+            "Do not discriminate based on protected attributes like age, sex, or race."
+        )
+        if fairness_instruction:
+            fairness_instr += f"\n    TARGETED REQUEST: {fairness_instruction}"
+            
+        system_message += fairness_instr
     
     # User message is everything after "User instructions:"
     user_message_template = user_parts[1].strip()
@@ -529,7 +706,7 @@ def parse_generated_output(generated_text: str, dataset_name: str) -> List[Dict]
             for match in matches:
                 full_sentence = match[0].strip()
                 risk_type = match[1].lower()
-                label = 0 if risk_type == 'good' else 1
+                label = 1 if risk_type == 'good' else 0 # 1=Good, 0=Bad
                 # Remove the label description to get clean sentence
                 sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+has\s+been\s+evaluated\s+and\s+the\s+decision\s+is\s+(good|bad)\s+credit\s+risk\.?', '', full_sentence, flags=re.IGNORECASE).strip()
                 if sentence:
@@ -617,11 +794,11 @@ def extract_sentence_and_label(text: str, dataset_name: str = None) -> tuple:
     if dataset_name == 'german-credit-data':
         # Look for "good credit risk" or "bad credit risk"
         if re.search(r'good\s+credit\s+risk', sentence, re.IGNORECASE):
-            label = 0  # 0 = good credit risk
+            label = 1  # 1 = good credit risk (Aligned with data_loader)
             # Remove the label description
             sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+has\s+been\s+evaluated\s+and\s+the\s+decision\s+is\s+good\s+credit\s+risk\.?', '', sentence, flags=re.IGNORECASE).strip()
         elif re.search(r'bad\s+credit\s+risk', sentence, re.IGNORECASE):
-            label = 1  # 1 = bad credit risk
+            label = 0  # 0 = bad credit risk (Aligned with data_loader)
             # Remove the label description
             sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+has\s+been\s+evaluated\s+and\s+the\s+decision\s+is\s+bad\s+credit\s+risk\.?', '', sentence, flags=re.IGNORECASE).strip()
     
@@ -961,8 +1138,8 @@ Note: Create a .env file in the project root with:
     parser.add_argument(
         "--max-samples-per-call",
         type=int,
-        default=100,
-        help="Maximum number of samples to request per API call (default: 100)"
+        default=1000,
+        help="Maximum number of samples to request per API call (default: 1000)"
     )
     parser.add_argument(
         "--model",
@@ -979,8 +1156,8 @@ Note: Create a .env file in the project root with:
     parser.add_argument(
         "--max-output-tokens",
         type=int,
-        default=2000,
-        help="Maximum number of tokens to generate (default: 2000)"
+        default=8192,
+        help="Maximum number of tokens to generate (default: 8192)"
     )
     parser.add_argument(
         "--temperature",
@@ -1033,6 +1210,22 @@ Note: Create a .env file in the project root with:
         action="store_true",
         help="Generate PCA 2D visualization for z_c and z_d of synthetic data"
     )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use mock generation for testing without API"
+    )
+    parser.add_argument(
+        "--sensitive-attrs",
+        type=str,
+        default="sex",
+        help="Comma-separated list of protected attributes to balance (e.g., 'sex,age'). Default: 'sex'"
+    )
+    parser.add_argument(
+        "--fair",
+        action="store_true",
+        help="Enable advanced fairness features (balanced ICL, targeted prompting, and post-validation balancing)"
+    )
     
     args = parser.parse_args()
     
@@ -1059,7 +1252,7 @@ Note: Create a .env file in the project root with:
     print(f"Output file: {args.output_file}")
     print("="*70)
     
-    # Load in-context examples
+    # Check CSV file exists
     if not os.path.exists(args.csv_file):
         raise FileNotFoundError(f"CSV file not found: {args.csv_file}")
     
@@ -1067,144 +1260,306 @@ Note: Create a .env file in the project root with:
     output_dir = os.path.join("sampled_data", args.dataset)
     save_label_data(args.csv_file, args.dataset, output_dir)
     
-    icl_examples = load_icl_examples(
-        args.csv_file, 
-        shuffle=not args.no_shuffle,
-        random_state=args.random_state,
-        dataset_name=args.dataset
-    )
+    # NOTE: load_icl_examples is now called inside the loop with different random_state for each batch
     
-    # Generate samples in batches until we have enough valid samples
+
+    # Generate samples in batches using ThreadPoolExecutor
     target_samples = args.n_examples
-    max_samples_per_call = min(args.max_samples_per_call, 100)  # Cap at 100
+    # reduce default batch size to 50 to avoid token limits
+    if args.max_samples_per_call > 50:
+        print(f"Suggestion: Reducing max_samples_per_call from {args.max_samples_per_call} to 50 for better stability.")
+        max_samples_per_call = 50 
+    else:
+        max_samples_per_call = args.max_samples_per_call
+
     all_combined_data = []
     all_raw_texts = []
-    call_count = 0
+    governor = None
+    
+    if args.fair:
+        governor = FairnessGovernor(
+            target_count=args.n_examples,
+            sensitive_attrs=args.sensitive_attrs.split(','),
+            dataset_name=args.dataset
+        )
     
     print(f"\n{'='*70}")
-    print(f"GENERATION STRATEGY")
+    print(f"GENERATION STRATEGY (PARALLEL EXECUTION)")
     print(f"{'='*70}")
     print(f"Target: {target_samples} valid samples")
-    print(f"Max samples per API call: {max_samples_per_call}")
-    print(f"Will generate in batches until enough valid samples are collected")
+    print(f"Batch size: {max_samples_per_call} samples per API call")
+    
+    # Calculate initial number of batches needed
+    import math
+    n_batches = math.ceil(target_samples / max_samples_per_call)
+    # Add a buffer of 20% more batches to account for invalid samples
+    n_batches_estimated = math.ceil(n_batches * 1.2)
+    
+    print(f"Estimated batches needed: {n_batches} (scheduling {n_batches_estimated} to ensure target is met)")
+    print(f"Max concurrent workers: 5")
     print(f"{'='*70}\n")
+
+    import concurrent.futures
+    import threading
     
-    while len(all_combined_data) < target_samples:
-        call_count += 1
-        # Always generate max_samples_per_call (or 100) per batch for better efficiency
-        # Only reduce if we're very close to target (within 10 samples)
-        remaining_needed = target_samples - len(all_combined_data)
-        if remaining_needed <= 10:
-            samples_to_generate = remaining_needed
-        else:
-            samples_to_generate = max_samples_per_call
-        
-        print(f"\n{'='*70}")
-        print(f"API Call #{call_count}: Generating {samples_to_generate} samples")
-        print(f"{'='*70}")
-        print(f"Current valid samples: {len(all_combined_data)}/{target_samples}")
-        print(f"Remaining needed: {remaining_needed}")
-        
-        # Format prompt for this batch
-        system_message, user_message = format_prompt(args.dataset, icl_examples, n_samples=samples_to_generate)
-        
-        # Generate samples
-        generated_text = generate_with_gemini(
-            system_message=system_message,
-            user_message=user_message,
-            model=args.model,
-            api_key=args.api_key,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            max_output_tokens=args.max_output_tokens,
-        )
-        all_raw_texts.append(generated_text)
-        
-        # Parse output to extract all sentences and labels
-        print(f"\nParsing generated output...")
-        parsed_results = parse_generated_output(generated_text, args.dataset)
-        
-        # Add metadata to each result
-        batch_results = []
-        for idx, result in enumerate(parsed_results, 1):
-            result['sample_id'] = len(all_combined_data) + idx
-            result['raw_generated_text'] = generated_text
-            result['call_number'] = call_count
-            batch_results.append(result)
-        
-        print(f"✓ Parsed {len(batch_results)} sentence(s) with labels")
-        
-        # Extract fields from sentences
-        print(f"Extracting fields from sentences...")
-        extracted_data = extract_fields_from_sentences(batch_results, args.dataset)
-        
-        # Combine sentence and extracted fields
-        # IMPORTANT: Use 'raw' sentence (with label sentence) for validation, not cleaned sentence
-        batch_combined_data = []
-        for i, (result, extracted) in enumerate(zip(batch_results, extracted_data), 1):
-            # Use raw sentence (with label sentence) if available, otherwise use cleaned sentence
-            raw_sentence = result.get('raw', result.get('sentence', ''))
-            entry = {
-                'sentence': raw_sentence,  # Keep full sentence with label sentence for validation
-            }
-            # Add extracted fields, but don't overwrite 'sentence' if it's already set
-            for key, value in extracted.items():
-                if key != 'sentence':  # Don't overwrite sentence with cleaned version
-                    entry[key] = value
+    # Shared lock for thread-safe list appending if needed (though extend is atomic usually, good practice)
+    data_lock = threading.Lock()
+    
+    def process_batch(batch_id, n_samples_batch, validation_assets=None):
+        """
+        Process a single batch of generation.
+        Returns (valid_data_list, raw_text_list)
+        """
+        try:
+            print(f"  [Batch {batch_id}] Starting generation for {n_samples_batch} samples...")
             
-            if 'label' not in entry or entry['label'] is None:
-                entry['label'] = result.get('label')
-            if 'class-label' not in entry and 'label' in entry:
-                entry['class-label'] = entry['label']
-            batch_combined_data.append(entry)
-        
-        # Validate this batch if validation is enabled
-        if not args.no_validate:
-            print(f"\nValidating batch #{call_count}...")
-            try:
-                from validate_synthetic_data import validate_synthetic_data, filter_valid_samples
+            # Re-shuffle ICL examples with unique seed
+            batch_random_state = args.random_state + batch_id if args.random_state is not None else batch_id * 100
+            
+            # Targeted Fairness
+            fairness_instruction = ""
+            icl_filter = None
+            if governor:
+                # Use a lock-safe way to get targets if needed, but here we just read
+                fairness_instruction = governor.get_sampling_targets(n_samples_batch)
                 
-                synthetic_sentences = [entry['sentence'] for entry in batch_combined_data]
+                # Try to extract a filter from the instruction for ICL matching
+                if "groups: " in fairness_instruction:
+                    try:
+                        # Split by the separator between groups (comma space)
+                        groups_list = fairness_instruction.split("groups: ")[1].split(", ")
+                        # Take the first group, e.g., "label:0,sex:female"
+                        group_str = groups_list[0].split(".")[0].strip()
+                        
+                        icl_filter = {}
+                        # Split the group into individual feature filters
+                        for part in group_str.split(","):
+                            if ":" in part:
+                                k, v = part.split(":")
+                                icl_filter[k.strip()] = v.strip()
+                    except Exception:
+                        icl_filter = None
+
+            icl_examples = load_icl_examples(
+                args.csv_file, 
+                shuffle=not args.no_shuffle,
+                random_state=batch_random_state,
+                dataset_name=args.dataset,
+                filter_dict=icl_filter
+            )
+            
+            # Format prompt with fairness flag and targeted instruction
+            system_message, user_message = format_prompt(
+                args.dataset, 
+                icl_examples, 
+                n_samples=n_samples_batch, 
+                fair=args.fair,
+                fairness_instruction=fairness_instruction
+            )
+            
+            # Generate
+            if args.mock:
+                print(f"  [Batch {batch_id}] Simulating API call (Mock Mode)...")
+                import time
+                time.sleep(1) # Simulate network delay
                 
-                # Get existing sentences from previous batches (for duplicate checking)
-                existing_sentences = [entry['sentence'] for entry in all_combined_data] if all_combined_data else None
+                # Create mock response based on n_samples_batch
+                mock_lines = []
+                for i in range(n_samples_batch):
+                    # Cycle through 4 combinations: (1,M), (1,F), (0,M), (0,F)
+                    combo = i % 4
+                    label = 1 if combo < 2 else 0
+                    sex = "male" if combo % 2 == 0 else "female"
+                    
+                    if label == 1:
+                        desc = "good credit risk"
+                    else:
+                        desc = "bad credit risk"
+                        
+                    sent = f"A {25+i}-year-old {sex} applicant. The decision is {desc}."
+                    mock_lines.append(f"Example {i+1}: {sent}")
                 
-                validation_results = validate_synthetic_data(
-                    synthetic_sentences=synthetic_sentences,
-                    dataset_name=args.dataset,
-                    k=args.k_neighbors,
-                    majority_threshold=args.majority_threshold,
-                    model_path=args.model_path,
-                    batch_size=32,
-                    existing_sentences=existing_sentences
+                generated_text = "\n".join(mock_lines)
+            else:
+                generated_text = generate_with_gemini(
+                    system_message=system_message,
+                    user_message=user_message,
+                    model=args.model,
+                    api_key=args.api_key,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    max_output_tokens=args.max_output_tokens,
                 )
+            
+            # Parse
+            parsed_results = parse_generated_output(generated_text, args.dataset)
+            
+            # Add metadata
+            batch_results = []
+            for idx, result in enumerate(parsed_results, 1):
+                result['batch_id'] = batch_id
+                result['raw_generated_text'] = generated_text
+                batch_results.append(result)
+            
+            # Extract fields
+            extracted_data = extract_fields_from_sentences(batch_results, args.dataset)
+            
+            # Combine
+            batch_combined_data = []
+            for i, (result, extracted) in enumerate(zip(batch_results, extracted_data), 1):
+                raw_sentence = result.get('raw', result.get('sentence', ''))
+                entry = {
+                    'sentence': raw_sentence,
+                }
+                for key, value in extracted.items():
+                    if key != 'sentence':
+                        entry[key] = value
                 
-                # Filter to keep only valid samples
-                batch_combined_data = filter_valid_samples(batch_combined_data, validation_results)
-                print(f"  - Batch #{call_count}: {len(batch_combined_data)} valid samples")
-                
-            except Exception as e:
-                print(f"  ⚠ Validation failed for batch #{call_count}: {e}")
-                # Keep all samples if validation fails
-                import traceback
-                traceback.print_exc()
-        
-        # Add valid samples to collection
-        all_combined_data.extend(batch_combined_data)
-        
-        print(f"\nProgress: {len(all_combined_data)}/{target_samples} valid samples collected")
-        
-        # If we have enough, stop
-        if len(all_combined_data) >= target_samples:
-            break
+                if 'label' not in entry or entry['label'] is None:
+                    entry['label'] = result.get('label')
+                if 'class-label' not in entry and 'label' in entry:
+                    entry['class-label'] = entry['label']
+                batch_combined_data.append(entry)
+            
+            # Validate
+            n_valid = 0
+            if not args.no_validate:
+                try:
+                    # Import here to avoid issues if module not found/circular imports in threads
+                    from validate_synthetic_data import validate_batch_with_assets, filter_valid_samples
+                    
+                    synthetic_sentences = [entry['sentence'] for entry in batch_combined_data]
+                    
+                    if validation_assets:
+                        validation_results = validate_batch_with_assets(
+                            synthetic_sentences=synthetic_sentences,
+                            assets=validation_assets,
+                            k=args.k_neighbors,
+                            majority_threshold=args.majority_threshold,
+                            batch_size=32,
+                            existing_sentences=None,
+                            fair=args.fair,
+                            sensitive_attrs=args.sensitive_attrs.split(',') if args.sensitive_attrs else None
+                        )
+                    else:
+                        # Fallback if assets failed to load
+                        from validate_synthetic_data import validate_synthetic_data
+                        validation_results = validate_synthetic_data(
+                            synthetic_sentences=synthetic_sentences,
+                            dataset_name=args.dataset,
+                            k=args.k_neighbors,
+                            majority_threshold=args.majority_threshold,
+                            model_path=args.model_path,
+                            batch_size=32,
+                            existing_sentences=None,
+                            fair=args.fair,
+                            sensitive_attrs=args.sensitive_attrs.split(',') if args.sensitive_attrs else None
+                        )
+                    
+                    batch_combined_data = filter_valid_samples(batch_combined_data, validation_results)
+                    print(f"  [Batch {batch_id}] Validation complete: {len(batch_combined_data)} valid samples")
+                    
+                except Exception as e:
+                    print(f"  [Batch {batch_id}] ⚠ Validation error: {e}")
+                    # On validation code error, maybe better to discard batch to be safe, or keep?
+                    # Let's keep for now but warn
+                    pass
+            
+            return batch_combined_data, generated_text
+            
+        except Exception as e:
+            print(f"  [Batch {batch_id}] ❌ Batch failed: {e}")
+            return [], ""
+
+    # Execute batches in parallel
+    total_valid_collected = 0
+    futures = []
     
-    # Trim to exact target if we have more than needed
+    # Pre-load validation assets once to avoid overhead in threads
+    validation_assets = None
+    if not args.no_validate:
+        try:
+            from validate_synthetic_data import load_validation_assets
+            validation_assets = load_validation_assets(args.dataset, args.model_path)
+            print("✓ Validation assets loaded successfully (reusing for all batches)")
+        except Exception as e:
+            print(f"⚠ Warning: Could not pre-load validation assets: {e}")
+            print("  Parallel batches will attempt to load assets individually.")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit initial set of batches
+        for i in range(n_batches_estimated):
+            futures.append(executor.submit(process_batch, i+1, max_samples_per_call, validation_assets))
+            
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(futures):
+            batch_data, raw_text = future.result()
+            
+            if raw_text:
+                all_raw_texts.append(raw_text)
+            
+            if batch_data:
+                with data_lock:
+                    all_combined_data.extend(batch_data)
+                    total_valid_collected = len(all_combined_data)
+                    if governor:
+                        governor.update(batch_data)
+                
+                status_msg = f"Progress update: {total_valid_collected}/{target_samples} valid samples"
+                if governor:
+                    status_msg += f"\n  Current distribution: {governor.get_shortfall_report()}"
+                print(status_msg)
+                
+            # Check if we have enough data to cancel pending (optional optimization)
+            if total_valid_collected >= target_samples:
+                print(f"Target met ({total_valid_collected} samples). Cancelling pending batches...")
+                for f in futures:
+                    f.cancel()
+                break
+
+    # Final trimming
     if len(all_combined_data) > target_samples:
-        print(f"\nTrimming to exact target: {len(all_combined_data)} -> {target_samples}")
-        all_combined_data = all_combined_data[:target_samples]
+        if governor:
+            print(f"\nTarget exceeded. Performing fairness-aware balancing to exactly {target_samples} samples...")
+            all_combined_data = governor.balance_dataset(all_combined_data, target_samples)
+        else:
+            print(f"\nTarget exceeded. Trimming to exactly {target_samples} samples.")
+            all_combined_data = all_combined_data[:target_samples]
+    
+    # Post-processing: Global Duplicate Check
+    if not args.no_validate and all_combined_data:
+        print(f"\nRunning final global duplicate check on {len(all_combined_data)} samples...")
+        try:
+             # Just check simple string uniqueness within the generated set
+             seen_sentences = set()
+             unique_data = []
+             duplicates = 0
+             for entry in all_combined_data:
+                 s_lower = entry['sentence'].strip().lower()
+                 if s_lower not in seen_sentences:
+                     seen_sentences.add(s_lower)
+                     unique_data.append(entry)
+                 else:
+                     duplicates += 1
+             
+             if duplicates > 0:
+                 print(f"  Removed {duplicates} global duplicates.")
+                 all_combined_data = unique_data
+                 
+                 # If we dropped below target after dedup, we might need more...
+                 # But for now let's just accept it or would complexify logic too much.
+                 if len(all_combined_data) < target_samples:
+                     print(f"  ⚠ Warning: After removing duplicates, count dropped to {len(all_combined_data)} < {target_samples}")
+                     
+        except Exception as e:
+            print(f"  ⚠ Global dedup failed: {e}")
     
     combined_data = all_combined_data
-    print(f"\n✓ Total: {len(combined_data)} valid samples collected from {call_count} API call(s)")
+    print(f"\n✓ Total: {len(combined_data)} valid samples collected")
+    
+    if governor:
+        print(f"\nFinal Fairness Report:")
+        print(governor.get_shortfall_report())
     
     # Validation is already done during generation loop
     n_after_validation = len(combined_data)
@@ -1227,7 +1582,7 @@ Note: Create a .env file in the project root with:
         'data': combined_data,  # Array of entries with sentence + all fields (only valid ones if validation enabled)
         'metadata': {
             'raw_generated_texts': all_raw_texts,
-            'n_api_calls': call_count
+            'n_api_calls': len(all_raw_texts)
         }
     }
     
@@ -1298,7 +1653,7 @@ Note: Create a .env file in the project root with:
     print(f"  - JSON: {args.output_file}")
     if combined_data:
         print(f"  - CSV: {csv_file}")
-    print(f"Generated {len(combined_data)} valid sample(s) from {call_count} API call(s)")
+    print(f"Generated {len(combined_data)} valid sample(s) from ~{len(all_raw_texts)} API call(s)")
     print(f"After validation: {len(combined_data)} valid entries")
     print(f"Each entry contains: sentence (natural language) + all extracted fields")
     print(f"{'='*70}\n")

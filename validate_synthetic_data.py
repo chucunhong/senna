@@ -22,8 +22,67 @@ import pandas as pd
 
 from components.models import CD_Model, device
 from components.dataset import TextDataset
-from data_loader import load_german_credit_data_balanced, load_dataset_generic
+from data_loader import load_german_credit_data_balanced, load_dataset_generic, load_dataset
 from components.tokenization import compute_and_cache_tokenized_data
+
+def flip_sensitive_attribute(sentence: str, attr_name: str, dataset_name: str) -> str:
+    """
+    Flip a sensitive attribute in a sentence for counterfactual checking.
+    
+    Args:
+        sentence: The natural language sentence
+        attr_name: Name of attribute to flip (e.g., 'sex', 'gender', 'age')
+        dataset_name: Dataset name for context
+    
+    Returns:
+        New sentence with flipped attribute, or original if not possible
+    """
+    if attr_name in ['sex', 'gender']:
+        if 'male' in sentence.lower():
+            # Be careful with 'female' vs 'male'
+            if 'female' in sentence.lower():
+                return sentence.replace('female', 'male').replace('Female', 'Male')
+            else:
+                return sentence.replace('male', 'Male').replace('male', 'female').replace('Male', 'Female')
+        elif 'female' in sentence.lower():
+            return sentence.replace('female', 'male').replace('Female', 'Male')
+            
+    return sentence
+
+def validate_counterfactual_fairness(
+    sentence: str,
+    label: int,
+    attr_name: str,
+    dataset_name: str,
+    model,
+    tokenizer,
+    z_c_original,
+    original_labels,
+    k: int = 9,
+    majority_threshold: float = 0.5
+) -> bool:
+    """
+    Check if flipping a sensitive attribute change the label prediction.
+    Balanced representation: if flipping 'sex' changes the label, it's unfair.
+    """
+    flipped_sentence = flip_sensitive_attribute(sentence, attr_name, dataset_name)
+    if flipped_sentence == sentence:
+        return True # Could not flip, skip check
+        
+    # Extract z_c for flipped sentence
+    from validate_synthetic_data import split_sentence_into_main_and_label, extract_z_c_z_d
+    main_part, _ = split_sentence_into_main_and_label(flipped_sentence, dataset_name)
+    
+    z_c_flipped, _ = extract_z_c_z_d(model, [main_part], tokenizer, batch_size=1, dataset_name=None)
+    
+    # Validate flipped sample
+    from validate_synthetic_data import validate_sample
+    _, majority_label_flipped, _ = validate_sample(
+        z_c_flipped[0], z_c_original, original_labels, k=k, majority_threshold=majority_threshold
+    )
+    
+    # If the label flips, it means the sample is biased based on this attribute
+    return int(majority_label_flipped) == int(label)
 
 
 def get_cache_path(dataset_name: str, model_path: str) -> str:
@@ -210,11 +269,11 @@ def extract_label_from_label_sentence(label_sentence: str, dataset_name: str) ->
     
     if dataset_name == 'german-credit-data':
         # Check for "good credit risk" or "bad credit risk"
-        # Note: 0 = good credit risk, 1 = bad credit risk
+        # Correctly matched with data_loader: 1 = good credit risk, 0 = bad credit risk
         if 'good credit risk' in label_sentence_lower:
-            return 0  # 0 = good credit risk
+            return 1  # 1 = good credit risk
         elif 'bad credit risk' in label_sentence_lower:
-            return 1  # 1 = bad credit risk
+            return 0  # 0 = bad credit risk
         # Also check for numeric patterns like "decision is 1" or "decision is 0"
         match = re.search(r'decision\s+is\s+(\d+)', label_sentence_lower)
         if match:
@@ -519,105 +578,7 @@ def find_k_nearest_neighbors(
     return k_nearest_distances, k_nearest_indices
 
 
-def check_duplicates(
-    synthetic_sentences: List[str],
-    original_sentences: List[str],
-    existing_sentences: Optional[List[str]] = None
-) -> Tuple[List[bool], Dict]:
-    """
-    Check for duplicate sentences:
-    1. Check if any synthetic sentence matches an original sentence
-    2. Check if any synthetic sentences are duplicates of each other
-    
-    Args:
-        synthetic_sentences: List of generated sentences to check
-        original_sentences: List of original dataset sentences
-        existing_sentences: Optional list of previously generated sentences (from previous batches)
-    
-    Returns:
-        Tuple of (is_unique_list, details_dict)
-        - is_unique_list: List of booleans, True if sentence is unique
-        - details_dict: Dictionary with duplicate information
-    """
-    is_unique = [True] * len(synthetic_sentences)
-    details = {
-        'duplicates_with_original': [],
-        'duplicates_within_batch': [],
-        'duplicates_with_existing': []
-    }
-    
-    # Normalize sentences for comparison (lowercase, strip whitespace)
-    normalized_original = {s.lower().strip(): i for i, s in enumerate(original_sentences)}
-    normalized_existing = {}
-    if existing_sentences:
-        normalized_existing = {s.lower().strip(): i for i, s in enumerate(existing_sentences)}
-    
-    # Check each synthetic sentence
-    seen_in_batch = {}
-    
-    for i, sentence in enumerate(synthetic_sentences):
-        normalized = sentence.lower().strip()
-        
-        # Check against original dataset
-        if normalized in normalized_original:
-            is_unique[i] = False
-            details['duplicates_with_original'].append({
-                'index': i,
-                'sentence': sentence[:100] + '...' if len(sentence) > 100 else sentence,
-                'matches_original_index': normalized_original[normalized]
-            })
-        
-        # Check against existing generated sentences (from previous batches)
-        if normalized_existing and normalized in normalized_existing:
-            is_unique[i] = False
-            details['duplicates_with_existing'].append({
-                'index': i,
-                'sentence': sentence[:100] + '...' if len(sentence) > 100 else sentence,
-                'matches_existing_index': normalized_existing[normalized]
-            })
-        
-        # Check for duplicates within current batch
-        if normalized in seen_in_batch:
-            is_unique[i] = False
-            is_unique[seen_in_batch[normalized]] = False  # Mark the first occurrence as duplicate too
-            details['duplicates_within_batch'].append({
-                'index': i,
-                'sentence': sentence[:100] + '...' if len(sentence) > 100 else sentence,
-                'duplicate_of_index': seen_in_batch[normalized]
-            })
-        else:
-            seen_in_batch[normalized] = i
-    
-    return is_unique, details
 
-
-def add_label_description_to_sentence(sentence: str, label: int, dataset_name: str) -> str:
-    """
-    Add label description to sentence, matching the format used during training.
-    
-    Args:
-        sentence: Original sentence without label
-        label: Label value (0 or 1)
-        dataset_name: Name of dataset
-    
-    Returns:
-        Sentence with label description appended
-    """
-    if dataset_name == 'german-credit-data':
-        if label == 1:
-            label_desc = "good credit risk"
-        else:
-            label_desc = "bad credit risk"
-        return f"{sentence} The credit application has been evaluated and the decision is {label_desc}."
-    elif dataset_name == 'adult':
-        if label == 1:
-            label_desc = "above 50K"
-        else:
-            label_desc = "below 50K"
-        return f"{sentence} The income classification for this person is {label_desc}."
-    else:
-        # Default format
-        return f"{sentence} Label: {label}."
 
 
 def validate_sample(
@@ -671,36 +632,12 @@ def validate_synthetic_data(
     majority_threshold: float = 0.5,
     model_path: Optional[str] = None,
     batch_size: int = 32,
-    existing_sentences: Optional[List[str]] = None
+    existing_sentences: Optional[List[str]] = None,
+    fair: bool = False,
+    sensitive_attrs: List[str] = None
 ) -> Dict:
     """
     Validate synthetic data by checking consistency with original dataset.
-    
-    New validation flow:
-    1. Load original data from processed_data/{dataset_name}.csv (sentences without label sentence)
-    2. Encode all original sentences (main parts only, no label sentence) and cache z_c, z_d
-    3. Split synthetic sentences into main part (for encoding) and label sentence (for label extraction)
-    4. Find k nearest neighbors based on z_c, compare label majority
-    5. If valid, extract fields like original data
-    6. Check for duplicates
-    
-    Args:
-        synthetic_sentences: List of generated sentences (may include label sentence)
-        dataset_name: Name of dataset (e.g., 'german-credit-data', 'adult')
-        k: Number of nearest neighbors to check (default: 9)
-        majority_threshold: Minimum fraction of neighbors that must have same label (default: 0.5)
-        model_path: Optional path to model checkpoint
-        batch_size: Batch size for encoding
-        existing_sentences: Optional list of previously generated sentences (for duplicate checking)
-    
-    Returns:
-        Dictionary with validation results:
-        {
-            'valid_indices': List of indices of valid samples,
-            'invalid_indices': List of indices of invalid samples,
-            'validation_details': List of dicts with details for each sample,
-            'valid_data': List of valid samples with extracted fields (only if valid)
-        }
     """
     print(f"\n{'='*70}")
     print(f"VALIDATING SYNTHETIC DATA")
@@ -711,11 +648,67 @@ def validate_synthetic_data(
     print(f"Majority threshold: {majority_threshold}")
     print(f"{'='*70}\n")
     
-    # Step 1: Load trained model
-    print("Step 1: Loading trained model...")
+    assets = load_validation_assets(dataset_name, model_path)
+    
+    results = validate_batch_with_assets(
+        synthetic_sentences=synthetic_sentences,
+        assets=assets,
+        k=k,
+        majority_threshold=majority_threshold,
+        batch_size=batch_size,
+        existing_sentences=existing_sentences,
+        fair=fair,
+        sensitive_attrs=sensitive_attrs
+    )
+    
+    # Reconstruct valid_data based on the new structure
+    final_valid_indices = results['valid_indices']
+    synthetic_labels_extracted = [d['extracted_label'] for l, d in zip(results['valid_indices'], results['validation_details']) if d['index'] == l]
+    # Wait, the above zip is complex. Let's just use the detail at the index.
+    
+    valid_data = []
+    for idx in final_valid_indices:
+        # Find the detail for this index
+        detail = next((d for d in results['validation_details'] if d['index'] == idx), None)
+        if detail:
+            entry = {
+                'sentence': synthetic_sentences[idx],
+                'label': detail['extracted_label']
+            }
+            valid_data.append(entry)
+
+    print(f"\n{'='*70}")
+    print("VALIDATION RESULTS")
+    print(f"{'='*70}")
+    print(f"Valid samples: {len(final_valid_indices)} ({100*len(final_valid_indices)/len(synthetic_sentences):.1f}%)")
+    print(f"Invalid samples: {len(results['invalid_indices'])} ({100*len(results['invalid_indices'])/len(synthetic_sentences):.1f}%)")
+    print(f"{'='*70}\n")
+    
+    return {
+        'valid_indices': final_valid_indices,
+        'invalid_indices': results['invalid_indices'],
+        'validation_details': results['validation_details'],
+        'valid_data': valid_data
+    }
+
+
+def load_validation_assets(dataset_name: str, model_path: Optional[str] = None) -> Dict:
+    """
+    Load all necessary assets for validation once.
+    
+    Args:
+        dataset_name: Name of dataset
+        model_path: Optional path to model checkpoint
+        
+    Returns:
+        Dict containing pre-loaded assets (model, tokenizer, z_c_original, etc.)
+    """
+    print(f"\nStep: Loading validation assets for {dataset_name}...")
+    
+    # 1. Load model
     model, checkpoint = load_trained_model(dataset_name, model_path)
     
-    # Get model path for cache
+    # Get actual model path for cache reference
     if model_path is None:
         model_dir = f"models/{dataset_name}"
         model_files = glob.glob(os.path.join(model_dir, "best_model_*.pth"))
@@ -723,137 +716,112 @@ def validate_synthetic_data(
             model_path = max(model_files, key=os.path.getmtime)
         else:
             model_path = f"models/{dataset_name}/default.pth"
-    
-    # Initialize tokenizer
+            
+    # 2. Tokenizer
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
     
-    # Step 2: Load original data from processed_data/{dataset_name}.csv
-    print(f"\nStep 2: Loading original data from processed_data/{dataset_name}.csv...")
+    # 3. Load original data
     try:
-        original_sentences_full, original_labels = load_original_data_from_processed(dataset_name)
-    except FileNotFoundError:
-        print(f"  ⚠ Processed data not found, falling back to data_loader...")
+        original_sentences_clean, original_labels, _, _ = load_dataset(dataset_name)
+    except Exception:
+        # Fallback simplified
         if dataset_name == "german-credit-data":
             original_sentences_full, original_labels, _, _ = load_german_credit_data_balanced(n_samples=None)
+            original_sentences_clean = []
+            for s in original_sentences_full:
+                main_part, _ = split_sentence_into_main_and_label(s, dataset_name)
+                original_sentences_clean.append(main_part)
         else:
-            original_sentences_full, original_labels, _, _ = load_dataset_generic(dataset_name)
-    
-    # Split original sentences into main parts (without label sentence)
-    print(f"  Splitting original sentences into main parts (removing label sentence)...")
-    original_main_sentences = []
-    for sentence in original_sentences_full:
-        main_part, _ = split_sentence_into_main_and_label(sentence, dataset_name)
-        original_main_sentences.append(main_part)
-    
-    # Step 3: Encode original data (main parts only) and cache
+            original_sentences_clean, original_labels, _, _ = load_dataset_generic(dataset_name)
+            
+    # 4. Load/Generate original embeddings
     cache_path = get_cache_path(dataset_name, model_path)
     cached_data = load_cached_encodings(cache_path)
     
+    z_c_original = None
+    z_d_original = None
+    
     if cached_data is not None:
         z_c_original, z_d_original, cached_sentences, cached_labels = cached_data
-        # Verify cache matches current data
-        if len(cached_sentences) == len(original_main_sentences):
-            print(f"  ✓ Using cached encodings")
-            print(f"  Original dataset size: {len(original_main_sentences)}")
-            print(f"  Original label distribution: {np.sum(original_labels)} (1), {len(original_labels) - np.sum(original_labels)} (0)")
-        else:
-            print(f"  ⚠ Cache size mismatch, re-encoding...")
+        # Simple size check for validity
+        if len(cached_sentences) != len(original_sentences_clean):
             cached_data = None
-    
+            
     if cached_data is None:
-        print(f"\nStep 3: Encoding original data (main parts only, no label sentence)...")
+        print(f"  Encoding original data (no valid cache found)...")
         z_c_original, z_d_original = extract_z_c_z_d(
-            model, 
-            original_main_sentences, 
-            tokenizer, 
-            batch_size=batch_size,
-            dataset_name=dataset_name
+            model, original_sentences_clean, tokenizer, dataset_name=None
         )
-        print(f"  Original z_c shape: {z_c_original.shape}")
-        print(f"  Original z_d shape: {z_d_original.shape}")
+        save_cached_encodings(cache_path, z_c_original, z_d_original, original_sentences_clean, original_labels)
+    else:
+        print(f"  ✓ Using cached original encodings")
         
-        # Save to cache (using main sentences, not full sentences)
-        save_cached_encodings(cache_path, z_c_original, z_d_original, original_main_sentences, original_labels)
+    return {
+        'model': model,
+        'tokenizer': tokenizer,
+        'z_c_original': z_c_original,
+        'z_d_original': z_d_original,
+        'original_labels': np.array(original_labels),
+        'original_sentences': original_sentences_clean,
+        'dataset_name': dataset_name,
+        'model_path': model_path
+    }
+
+def validate_batch_with_assets(
+    synthetic_sentences: List[str],
+    assets: Dict,
+    k: int = 9,
+    majority_threshold: float = 0.5,
+    batch_size: int = 32,
+    existing_sentences: Optional[List[str]] = None,
+    fair: bool = False,
+    sensitive_attrs: List[str] = None
+) -> Dict:
+    """
+    Validate a batch of synthetic samples using pre-loaded assets.
+    """
+    dataset_name = assets['dataset_name']
+    model = assets['model']
+    tokenizer = assets['tokenizer']
+    z_c_original = assets['z_c_original']
+    original_labels = assets['original_labels']
+    original_main_sentences = assets['original_sentences'] # For duplicate checking
     
-    # Step 4: Split synthetic sentences into main part and label sentence
-    print(f"\nStep 4: Splitting synthetic sentences into main part and label sentence...")
+    # 1. Split synthetic sentences
     synthetic_main_sentences = []
-    synthetic_label_sentences = []
+    synthetic_label_sentences = [] # Keep for debug/details
     synthetic_labels_extracted = []
-    
-    # Debug: Check first few sentences
-    if len(synthetic_sentences) > 0:
-        print(f"  Debug: First sentence (first 200 chars): {synthetic_sentences[0][:200]}...")
     
     for i, sentence in enumerate(synthetic_sentences):
         main_part, label_sentence = split_sentence_into_main_and_label(sentence, dataset_name)
         synthetic_main_sentences.append(main_part)
         synthetic_label_sentences.append(label_sentence)
         
-        # Extract label from label sentence
         extracted_label = extract_label_from_label_sentence(label_sentence, dataset_name)
         if extracted_label is None:
-            # Fallback: try to extract from full sentence if label sentence is empty
             extracted_label = extract_label_from_label_sentence(sentence, dataset_name)
-        
-        # Debug first few cases
-        if i < 3:
-            print(f"  Debug sample {i+1}:")
-            print(f"    Full sentence (first 150 chars): {sentence[:150]}...")
-            print(f"    Label sentence: '{label_sentence[:100] if label_sentence else 'EMPTY'}...'")
-            print(f"    Extracted label: {extracted_label}")
-        
         synthetic_labels_extracted.append(extracted_label)
-    
+
     n_extracted = sum(1 for l in synthetic_labels_extracted if l is not None)
-    print(f"  Extracted {n_extracted} labels from label sentences")
-    
-    if n_extracted == 0:
+    if n_extracted == 0 and len(synthetic_sentences) > 0:
         print(f"  ⚠ WARNING: No labels extracted! This will cause all samples to be invalid.")
-        print(f"  Checking if sentences have label sentence pattern...")
-        # Check a few sentences for label patterns
-        for i in range(min(3, len(synthetic_sentences))):
-            sentence = synthetic_sentences[i]
-            has_pattern = (
-                'credit application has been evaluated' in sentence.lower() or
-                'income classification' in sentence.lower() or
-                'good credit risk' in sentence.lower() or
-                'bad credit risk' in sentence.lower()
-            )
-            print(f"    Sample {i+1}: Has label pattern = {has_pattern}")
     
-    # Step 5: Encode synthetic data (main parts only)
-    print(f"\nStep 5: Encoding synthetic data (main parts only, no label sentence)...")
-    z_c_synthetic, z_d_synthetic = extract_z_c_z_d(
-        model, 
-        synthetic_main_sentences, 
-        tokenizer, 
-        batch_size=batch_size,
-        dataset_name=dataset_name
+    # 2. Encode synthetic data
+    z_c_synthetic, _ = extract_z_c_z_d(
+        model, synthetic_main_sentences, tokenizer, 
+        batch_size=batch_size, dataset_name=dataset_name
     )
-    print(f"  Synthetic z_c shape: {z_c_synthetic.shape}")
-    print(f"  Synthetic z_d shape: {z_d_synthetic.shape}")
     
-    # Step 6: Validate each synthetic sample
-    print(f"\nStep 6: Validating {len(synthetic_sentences)} synthetic samples...")
-    print(f"  - Comparing z_c with {len(original_main_sentences)} original samples")
-    print(f"  - Finding {k} nearest neighbors for each sample")
-    print(f"  - Checking if extracted label matches majority (threshold: {majority_threshold})")
-    
+    # 3. Validate each sample
     valid_indices = []
     invalid_indices = []
     validation_details = []
     
-    original_labels_array = np.array(original_labels)
-    
     for i in range(len(synthetic_sentences)):
         sentence = synthetic_sentences[i]
-        main_sentence = synthetic_main_sentences[i]
         extracted_label = synthetic_labels_extracted[i]
         
-        # Skip if label cannot be extracted
         if extracted_label is None:
-            invalid_indices.append(i)
             validation_details.append({
                 'index': i,
                 'sentence': sentence[:100] + '...' if len(sentence) > 100 else sentence,
@@ -864,24 +832,40 @@ def validate_synthetic_data(
                 'majority_ratio': None,
                 'label_matches': False
             })
+            invalid_indices.append(i)
             continue
         
         z_c_sample = z_c_synthetic[i]
         
-        # Find k nearest neighbors by comparing z_c distances and check majority label
-        is_valid, majority_label, majority_ratio = validate_sample(
-            z_c_sample,
-            z_c_original,
-            original_labels_array,
-            k=k,
-            majority_threshold=majority_threshold,
-            metric='cosine'
+        is_valid_knn, majority_label, majority_ratio = validate_sample(
+            z_c_sample, z_c_original, original_labels, 
+            k=k, majority_threshold=majority_threshold
         )
         
-        # Check if extracted label matches majority label
         label_matches = (extracted_label == majority_label)
-        has_clear_majority = (majority_ratio > 0.5)  # Must have >50% majority
+        has_clear_majority = (majority_ratio > 0.5)
         final_valid = label_matches and has_clear_majority
+        
+        # Counterfactual Fairness Check
+        fairness_passed = True
+        if fair and sentence and final_valid and sensitive_attrs:
+            for attr in sensitive_attrs:
+                if not validate_counterfactual_fairness(
+                    sentence=sentence,
+                    label=extracted_label,
+                    attr_name=attr,
+                    dataset_name=dataset_name,
+                    model=model,
+                    tokenizer=tokenizer,
+                    z_c_original=z_c_original,
+                    original_labels=original_labels,
+                    k=k,
+                    majority_threshold=majority_threshold
+                ):
+                    fairness_passed = False
+                    break
+        
+        final_valid = final_valid and fairness_passed
         
         validation_details.append({
             'index': i,
@@ -890,6 +874,7 @@ def validate_synthetic_data(
             'majority_label': int(majority_label),
             'majority_ratio': float(majority_ratio),
             'label_matches': bool(label_matches),
+            'fairness_passed': bool(fairness_passed),
             'is_valid': bool(final_valid)
         })
         
@@ -1070,62 +1055,14 @@ def visualize_synthetic_data_pca(
             # Save to cache for future use
             save_cached_encodings(cache_path, z_c_original, z_d_original, original_sentences, original_labels)
     
-    # Verify label consistency with neighbors (for visualization)
-    # This should be done AFTER loading original data
-    majority_labels_from_neighbors = None
-    if compare_with_original and z_c_original is not None:
-        print(f"\nVerifying label consistency with neighbors...")
-        
-        majority_labels_list = []
-        majority_ratios_list = []
-        for i in range(len(synthetic_sentences)):
-            z_c_sample = z_c_synthetic[i]
-            distances, indices = find_k_nearest_neighbors(z_c_sample, z_c_original, k=9, metric='cosine')
-            neighbor_labels = original_labels_array[indices]
-            
-            # Count labels with proper handling of ties
-            unique_labels, counts = np.unique(neighbor_labels, return_counts=True)
-            majority_count = counts.max()
-            majority_label = unique_labels[counts.argmax()]
-            majority_ratio = majority_count / len(neighbor_labels)
-            
-            majority_labels_list.append(int(majority_label))
-            majority_ratios_list.append(majority_ratio)
-        
-        majority_labels_from_neighbors = np.array(majority_labels_list)
-        majority_ratios = np.array(majority_ratios_list)
-        
-        # Check consistency - label must match AND majority ratio must be > threshold
-        label_matches = (synthetic_labels_array == majority_labels_from_neighbors)
-        ratio_valid = (majority_ratios > 0.5)  # Must have clear majority (>50%)
-        valid_mask = label_matches & ratio_valid
-        
-        n_matches = np.sum(valid_mask)
-        n_mismatches = len(synthetic_sentences) - n_matches
-        
-        print(f"  ✓ {n_matches}/{len(synthetic_sentences)} synthetic samples have labels matching majority of neighbors ({100*n_matches/len(synthetic_sentences):.1f}%)")
-        
-        if n_mismatches > 0:
-            label_only_mismatches = np.sum(label_matches & ~ratio_valid)
-            ratio_only_mismatches = np.sum(~label_matches & ratio_valid)
-            both_mismatches = np.sum(~label_matches & ~ratio_valid)
-            
-            print(f"  ⚠ Filtering out {n_mismatches} samples:")
-            if label_only_mismatches > 0:
-                print(f"     - {label_only_mismatches} samples: label mismatch (ratio OK)")
-            if ratio_only_mismatches > 0:
-                print(f"     - {ratio_only_mismatches} samples: weak majority ratio (label OK)")
-            if both_mismatches > 0:
-                print(f"     - {both_mismatches} samples: both label and ratio mismatch")
-            
-            # Filter out mismatches
-            z_c_synthetic = z_c_synthetic[valid_mask]
-            z_d_synthetic = z_d_synthetic[valid_mask]
-            synthetic_labels_array = synthetic_labels_array[valid_mask]
-            majority_labels_from_neighbors = majority_labels_from_neighbors[valid_mask]
-            
-            print(f"  ✓ After filtering: {len(z_c_synthetic)} samples remain for visualization")
+    # NOTE: We do NOT re-validate samples here
+    # The samples passed to this function should already be validated by validate_synthetic_data()
+    # Re-validating would cause inconsistency and might filter with different cache/model
+    # We directly use synthetic_labels_array which contains the extracted labels from validated samples
+    print(f"\n✓ Using {len(synthetic_sentences)} validated samples for visualization")
+    print(f"  (Samples were already validated before calling this function)")
     
+
     # Apply PCA
     # IMPORTANT: Fit PCA on original data only (same as during training)
     # Then transform both original and synthetic data using the same PCA
@@ -1177,24 +1114,14 @@ def visualize_synthetic_data_pca(
                   c='lightcoral', alpha=0.3, s=20, label='Original (Label 1)', marker='o')
     
     # Plot synthetic data (darker, larger)
-    # Use majority labels from neighbors if available (for consistency check)
-    # Note: Mismatches have already been filtered out above
-    if majority_labels_from_neighbors is not None:
-        # Plot by majority label (what neighbors suggest)
-        ax.scatter(z_c_synthetic_2d[majority_labels_from_neighbors == 0, 0], 
-                  z_c_synthetic_2d[majority_labels_from_neighbors == 0, 1],
-                  c='blue', alpha=0.7, s=80, label='Synthetic (Label 0)', marker='^', edgecolors='darkblue', linewidths=1)
-        ax.scatter(z_c_synthetic_2d[majority_labels_from_neighbors == 1, 0], 
-                  z_c_synthetic_2d[majority_labels_from_neighbors == 1, 1],
-                  c='red', alpha=0.7, s=80, label='Synthetic (Label 1)', marker='^', edgecolors='darkred', linewidths=1)
-    else:
-        # Plot by synthetic labels
-        ax.scatter(z_c_synthetic_2d[synthetic_labels_array == 0, 0], 
-                  z_c_synthetic_2d[synthetic_labels_array == 0, 1],
-                  c='blue', alpha=0.7, s=80, label='Synthetic (Label 0)', marker='^', edgecolors='darkblue', linewidths=1)
-        ax.scatter(z_c_synthetic_2d[synthetic_labels_array == 1, 0], 
-                  z_c_synthetic_2d[synthetic_labels_array == 1, 1],
-                  c='red', alpha=0.7, s=80, label='Synthetic (Label 1)', marker='^', edgecolors='darkred', linewidths=1)
+    # Use extracted labels from synthetic data (already validated)
+    ax.scatter(z_c_synthetic_2d[synthetic_labels_array == 0, 0], 
+              z_c_synthetic_2d[synthetic_labels_array == 0, 1],
+              c='blue', alpha=0.7, s=80, label='Synthetic (Label 0)', marker='^', edgecolors='darkblue', linewidths=1)
+    ax.scatter(z_c_synthetic_2d[synthetic_labels_array == 1, 0], 
+              z_c_synthetic_2d[synthetic_labels_array == 1, 1],
+              c='red', alpha=0.7, s=80, label='Synthetic (Label 1)', marker='^', edgecolors='darkred', linewidths=1)
+
     
     ax.set_xlabel(f'PC1 ({pca_c.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_c.explained_variance_ratio_[1]:.2%})', fontsize=12)
@@ -1219,25 +1146,15 @@ def visualize_synthetic_data_pca(
                   c='lightcoral', alpha=0.3, s=20, label='Original (Label 1)', marker='o')
     
     # Plot synthetic data (darker, larger)
-    # Use majority labels from neighbors if available (for consistency check)
-    # Note: Mismatches have already been filtered out above
-    if majority_labels_from_neighbors is not None:
-        # Plot by majority label (what neighbors suggest)
-        ax.scatter(z_d_synthetic_2d[majority_labels_from_neighbors == 0, 0], 
-                  z_d_synthetic_2d[majority_labels_from_neighbors == 0, 1],
-                  c='blue', alpha=0.7, s=80, label='Synthetic (Label 0)', marker='^', edgecolors='darkblue', linewidths=1)
-        ax.scatter(z_d_synthetic_2d[majority_labels_from_neighbors == 1, 0], 
-                  z_d_synthetic_2d[majority_labels_from_neighbors == 1, 1],
-                  c='red', alpha=0.7, s=80, label='Synthetic (Label 1)', marker='^', edgecolors='darkred', linewidths=1)
-    else:
-        # Plot by synthetic labels
-        ax.scatter(z_d_synthetic_2d[synthetic_labels_array == 0, 0], 
-                  z_d_synthetic_2d[synthetic_labels_array == 0, 1],
-                  c='blue', alpha=0.7, s=80, label='Synthetic (Label 0)', marker='^', edgecolors='darkblue', linewidths=1)
-        ax.scatter(z_d_synthetic_2d[synthetic_labels_array == 1, 0], 
-                  z_d_synthetic_2d[synthetic_labels_array == 1, 1],
-                  c='red', alpha=0.7, s=80, label='Synthetic (Label 1)', marker='^', edgecolors='darkred', linewidths=1)
+    # Use extracted labels from synthetic data (already validated)
+    ax.scatter(z_d_synthetic_2d[synthetic_labels_array == 0, 0], 
+              z_d_synthetic_2d[synthetic_labels_array == 0, 1],
+              c='blue', alpha=0.7, s=80, label='Synthetic (Label 0)', marker='^', edgecolors='darkblue', linewidths=1)
+    ax.scatter(z_d_synthetic_2d[synthetic_labels_array == 1, 0], 
+              z_d_synthetic_2d[synthetic_labels_array == 1, 1],
+              c='red', alpha=0.7, s=80, label='Synthetic (Label 1)', marker='^', edgecolors='darkred', linewidths=1)
     
+
     ax.set_xlabel(f'PC1 ({pca_d.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_d.explained_variance_ratio_[1]:.2%})', fontsize=12)
     title = f'z_d (Demographic) - PCA 2D Projection'

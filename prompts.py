@@ -72,7 +72,7 @@ The template of each entry is:
         - num_people: number of people liable to provide maintenance for
         - telephone: telephone availability
         - foreign_worker: foreign worker status
-        - label: the credit risk classification label (0 for good credit risk, 1 for bad credit risk). IMPORTANT: Include this as "good credit risk" or "bad credit risk" at the end of the sentence.
+        - label: the credit risk classification label (1 for good credit risk, 0 for bad credit risk). IMPORTANT: Include this as "good credit risk" or "bad credit risk" at the end of the sentence.
     
 Output format:
 {{
