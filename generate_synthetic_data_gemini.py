@@ -68,89 +68,152 @@ class FairnessGovernor:
         for key in sorted_keys:
             report += f"\n    - {key}: {self.counts[key]}"
         return report
-    
-    def get_sampling_targets(self, n_to_generate: int) -> str:
+
+    def is_target_met(self) -> bool:
         """
-        Produce a natural language instruction for the LLM to fill the most needed groups.
+        Check if we have enough samples to satisfy the final balanced target.
+        Goal: Each intersection group (Label x SensitiveAttr) should have at least 
+        (target_count / (2 * num_sensitive_combinations)) samples.
         """
         if not self.sensitive_attrs:
-            return ""
+            # Simple label balancing check
+            c0 = sum(1 for s in self.samples if str(s.get('class-label', s.get('label', 'unknown'))) == '0')
+            c1 = sum(1 for s in self.samples if str(s.get('class-label', s.get('label', 'unknown'))) == '1')
+            target_per_label = self.target_count // 2
+            return c0 >= target_per_label and c1 >= target_per_label
             
-        # Target labels
-        labels = [0, 1]
+        # For sensitive attrs, we assume binary for simplicity in this check (male/female)
+        # or we just look at the current keys in counts.
+        target_per_label = self.target_count // 2
         
-        # Try to guess values for sensitive attrs if not seen yet
-        # For german-credit-data, we know common ones
-        attr_values = {
-            'sex': ['male', 'female'],
-            'gender': ['male', 'female'],
-            'age': ['young', 'old'] # Simplified for instruction
-        }
+        # We need to ensure each label group has at least target_per_label
+        # AND within each label, subgroups are somewhat balanced or have enough to flip.
+        data_0 = [e for e in self.samples if str(e.get('class-label', e.get('label', 'unknown'))) == '0']
+        data_1 = [e for e in self.samples if str(e.get('class-label', e.get('label', 'unknown'))) == '1']
         
-        # Identify absolute missing groups first
-        missing_groups = []
-        for l in labels:
-            for attr in self.sensitive_attrs:
-                vals = attr_values.get(attr, ['unknown'])
-                for v in vals:
-                    key = f"label:{l},{attr}:{v}"
-                    # Check if this group or a similar one is missing
-                    # (Filtering the keys is more robust but more complex)
-                    if not any(k.startswith(f"label:{l}") and f"{attr}:{v}" in k for k in self.counts.keys()):
-                        missing_groups.append(key)
-        
-        if missing_groups:
-            return f"Focus on generating samples for these missing groups: {', '.join(missing_groups[:3])}."
+        if len(data_0) < target_per_label or len(data_1) < target_per_label:
+            return False
             
-        if not self.counts:
-            return "Ensure a balanced mix of labels (0 and 1) and demographic groups (sex, age, etc.)."
+        # Deep check: each subgroup within label
+        def check_subgroups(group_data, label_target):
+            if not group_data: return False
+            subgroup_counts = {}
+            for s in group_data:
+                attr_vals = tuple(str(s.get(attr, "unknown")).lower().strip() for attr in self.sensitive_attrs)
+                subgroup_counts[attr_vals] = subgroup_counts.get(attr_vals, 0) + 1
             
-        min_count = min(self.counts.values())
-        neediest_groups = [k for k, v in self.counts.items() if v == min_count]
-        
-        target_instr = f"Focus on generating more samples for these underrepresented groups: {', '.join(neediest_groups[:3])}."
-        return target_instr
+            # For German Credit, we expect at least 2 subgroups (e.g. male, female)
+            n_subgroups = max(2, len(subgroup_counts)) 
+            min_per_subgroup = label_target // n_subgroups
+            
+            # If any subgroup is missing or significantly low, keep going
+            if len(subgroup_counts) < n_subgroups:
+                return False
 
-    def balance_dataset(self, samples: List[Dict], target_total: int) -> List[Dict]:
+            for count in subgroup_counts.values():
+                if count < min_per_subgroup: # No margin, we need full count for perfect balance
+                    return False
+            
+            return True
+
+        return check_subgroups(data_0, target_per_label) and check_subgroups(data_1, target_per_label)
+
+    def print_distribution_table(self, samples_list: List[Dict] = None):
+        """
+        Prints a nice ASCII table of the subgroup distribution.
+        If samples_list is provided, it calculates distribution from that list (for final report).
+        """
+        print(f"\n{'='*40}")
+        if samples_list is not None:
+            print(f"{'FINAL BALANCED DISTRIBUTION':^40}")
+            # Calculate counts for this specific list
+            display_counts = {}
+            for s in samples_list:
+                key = self.get_group_key(s)
+                display_counts[key] = display_counts.get(key, 0) + 1
+        else:
+            print(f"{'CURRENT GROUP DISTRIBUTION':^40}")
+            display_counts = self.counts
+            
+        print(f"{'='*40}")
+        print(f"{'Label':<10} | {'Subgroup':<20} | {'Count':<5}")
+        print(f"{'-'*11}+{'-'*22}+{'-'*7}")
+        
+        sorted_keys = sorted(display_counts.keys())
+        for key in sorted_keys:
+            # key is "label:X,attr1:V1,..."
+            parts = key.split(',')
+            label = parts[0].split(':')[1]
+            subgroup = ",".join([p.split(':')[1] for p in parts[1:]])
+            count = display_counts[key]
+            print(f"{label:<10} | {subgroup:<20} | {count:<5}")
+        
+        if samples_list is not None:
+            print(f"{'-'*11}+{'-'*22}+{'-'*7}")
+            print(f"{'TOTAL':<10} | {'':<20} | {len(samples_list):<5}")
+            
+        print(f"{'='*40}\n")
+
+    def balance_dataset(self, samples: List[Dict], target_total: int, validation_assets: Dict = None) -> List[Dict]:
         """
         Trim the dataset to match target_total while maximizing balance.
         """
         if not samples:
             return []
             
-        # Group samples by their group key
-        grouped_samples = {}
-        for s in samples:
-            key = self.get_group_key(s)
-            if key not in grouped_samples:
-                grouped_samples[key] = []
-            grouped_samples[key].append(s)
-            
-        n_groups = len(grouped_samples)
-        if n_groups == 0:
-            return samples[:target_total]
-            
-        target_per_group = target_total // n_groups
-        balanced_samples = []
+        print(f"\n--- Final Dataset Balancing (Refined 4-Step Logic) ---")
         
-        # First pass: take up to target_per_group from each
-        remaining_slots = target_total
-        over_samples = []
+        # (1) Label Balancing: Split by label and balance first
+        data_0 = [e for e in samples if str(e.get('class-label', e.get('label', 'unknown'))) == '0']
+        data_1 = [e for e in samples if str(e.get('class-label', e.get('label', 'unknown'))) == '1']
         
-        for key in sorted(grouped_samples.keys()):
-            subset = grouped_samples[key]
-            take = min(len(subset), target_per_group)
-            balanced_samples.extend(subset[:take])
-            remaining_slots -= take
-            if len(subset) > take:
-                over_samples.extend(subset[take:])
+        target_per_label = target_total // 2
+        
+        def balance_sensitive_within_group(group_data: List[Dict], target_count: int, label_val: str) -> List[Dict]:
+            if not group_data: return []
+            if not self.sensitive_attrs: return group_data[:target_count]
+            
+            # Analyze groups
+            group_counts = {}
+            for s in group_data:
+                # Get sensitive attr values for this sample
+                attr_vals = tuple(str(s.get(attr, "unknown")).lower().strip() for attr in self.sensitive_attrs)
+                if attr_vals not in group_counts: group_counts[attr_vals] = []
+                group_counts[attr_vals].append(s)
+            
+            # Shuffle each group for randomness
+            import random
+            for k in group_counts:
+                random.shuffle(group_counts[k])
                 
-        # Second pass: fill remaining slots from over_samples if any
-        if remaining_slots > 0 and over_samples:
-            balanced_samples.extend(over_samples[:remaining_slots])
+            n_subgroups = len(group_counts)
+            if n_subgroups <= 1: return group_data[:target_count]
             
-        return balanced_samples
+            # Use same number of subgroups as target calculation (usually 2 for sex/gender)
+            expected_n_subgroups = max(2, n_subgroups)
+            target_per_subgroup = target_count // expected_n_subgroups
+            
+            print(f"  [Label {label_val}] Initial distribution: { {k: len(v) for k, v in group_counts.items()} }")
+            
+            # Simplified: No flipping, just trim carefully
+            result_samples = []
+            for k in sorted(group_counts.keys()):
+                count = min(len(group_counts[k]), target_per_subgroup)
+                result_samples.extend(group_counts[k][:count])
+            
+            print(f"  [Label {label_val}] Final distribution after balancing: { {k: len([s for s in result_samples if tuple(str(s.get(attr, 'unknown')).lower().strip() for attr in self.sensitive_attrs) == k]) for k in group_counts} } -> Collected {len(result_samples)}")
+            return result_samples
 
+        balanced_0 = balance_sensitive_within_group(data_0, target_per_label, "0")
+        balanced_1 = balance_sensitive_within_group(data_1, target_per_label, "1")
+        
+        final_data = balanced_0 + balanced_1
+        import random
+        random.shuffle(final_data)
+        
+        print(f"Final dataset size: {len(final_data)} (Label 0: {len(balanced_0)}, Label 1: {len(balanced_1)})")
+        return final_data
+    
 
 def convert_to_original_csv_format(combined_data: List[Dict], dataset_name: str) -> pd.DataFrame:
     """
@@ -214,7 +277,7 @@ if GEMINI_AVAILABLE:
     load_dotenv()
 
 
-def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 42, dataset_name: str = None, filter_dict: Dict = None) -> str:
+def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 42, dataset_name: str = None, filter_dict: Dict = None, sensitive_attrs: List[str] = None) -> str:
     """
     Load ALL in-context examples from CSV file with optional shuffling.
     Formats examples according to the template in prompts.py, including label description.
@@ -258,50 +321,134 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
             )
     
     df = pd.read_csv(csv_path)
+
+    # NEW: Join sensitive attributes from original data if missing
+    if sensitive_attrs:
+        dataset_path = f"data/{dataset_name}.csv"
+        if os.path.exists(dataset_path):
+            try:
+                original_df = pd.read_csv(dataset_path)
+                # Check for sensitive attributes that are missing in the ICL df
+                missing_attrs = [attr for attr in sensitive_attrs if attr not in df.columns]
+                if missing_attrs and 'original_index' in df.columns:
+                    print(f"Joining missing sensitive attributes {missing_attrs} from {dataset_path}...")
+                    
+                    # Ensure original_index is integer
+                    df['original_index'] = df['original_index'].astype(int)
+                    
+                    # Get available attributes from original_df
+                    available_missing = [attr for attr in missing_attrs if attr in original_df.columns]
+                    
+                    if available_missing:
+                        # Use the index of original_df as the join key
+                        attr_df = original_df[available_missing].copy()
+                        attr_df.index.name = 'original_index'
+                        df = df.merge(attr_df, on='original_index', how='left')
+                        print(f"✓ Attributes {available_missing} joined successfully using original_index")
+            except Exception as e:
+                print(f"⚠ Warning: Falling back. Could not join attributes: {e}")
     
-    # NEW: Filter by specific group if requested
+    # NEW: Filter by specific group if requested (now moved after potentially joining attributes)
     if filter_dict:
         df_filtered = df.copy()
+        matched_cols = []
         for col, val in filter_dict.items():
             if col in df_filtered.columns:
                 # Robust match: convert column to string for comparison
                 df_filtered = df_filtered[df_filtered[col].astype(str).str.lower() == str(val).lower()]
+                matched_cols.append(col)
         
         if len(df_filtered) > 0:
             df = df_filtered
-            print(f"✓ Filtered ICL: {len(df)} samples matching {filter_dict}")
+            print(f"✓ Filtered ICL: {len(df)} samples matching { {k: filter_dict[k] for k in matched_cols} }")
         else:
             print(f"⚠ Filtered ICL: 0 samples matching {filter_dict}. Falling back to balanced sampling.")
 
-    # NEW: Balanced ICL Sampling for Fairness
-    if shuffle and not filter_dict:
-        print(f"Sampling balanced ICL examples (50/50 label split if possible)...")
+    # NEW: Balanced ICL Sampling for Fairness (Jointly balance Label + Sensitive Attributes)
+    # We prioritize joint balancing unless a very specific filter was requested that worked
+    if shuffle:
         label_col = 'label' if 'label' in df.columns else ('class-label' if 'class-label' in df.columns else None)
         
         if label_col:
-            df_0 = df[df[label_col].astype(str).isin(['0', '0.0', 'bad credit risk', 'income <=50K'])]
-            df_1 = df[df[label_col].astype(str).isin(['1', '1.0', 'good credit risk', 'income >50K'])]
+            # We want to balance by (Label, SensitiveAttr1, ...)
+            # If sensitive_attrs is provided, use them. Otherwise just balance by label.
+            balance_cols = [label_col]
+            if sensitive_attrs:
+                for attr in sensitive_attrs:
+                    if attr in df.columns:
+                        balance_cols.append(attr)
             
-            min_size = min(len(df_0), len(df_1))
-            if min_size > 0:
-                df_0_sampled = df_0.sample(n=min_size, random_state=random_state)
-                df_1_sampled = df_1.sample(n=min_size, random_state=random_state)
-                df = pd.concat([df_0_sampled, df_1_sampled]).sample(frac=1, random_state=random_state)
-                print(f"✓ Balanced ICL: {len(df)} samples ({min_size} for each label)")
+            # If we have multiple balance columns, attempt joint balancing
+            if len(balance_cols) > 1:
+                print(f"Sampling balanced ICL examples (balanced across: {balance_cols})...")
+                
+                # Create group-based sampling
+                groups = df.groupby(balance_cols)
+                min_group_size = groups.size().min()
+                
+                if min_group_size > 0:
+                    # Sample min_group_size from each group
+                    sampled_entries = []
+                    for _, group_df in groups:
+                        sampled_entries.append(group_df.sample(n=min_group_size, random_state=random_state))
+                    
+                    df = pd.concat(sampled_entries).sample(frac=1, random_state=random_state)
+                    print(f"✓ Jointly Balanced ICL: {len(df)} samples ({min_group_size} per intersection group)")
+                else:
+                    # Fallback to simple label balancing if joint is too sparse or filter was applied
+                    print(f"⚠ Could not jointly balance ICL (some groups empty). Falling back to simple label balancing.")
+                    df_0 = df[df[label_col].astype(str).isin(['0', '0.0', 'bad credit risk', 'income <=50K'])]
+                    df_1 = df[df[label_col].astype(str).isin(['1', '1.0', 'good credit risk', 'income >50K'])]
+                    min_size = min(len(df_0), len(df_1))
+                    if min_size > 0:
+                        df_0_s = df_0.sample(n=min_size, random_state=random_state)
+                        df_1_s = df_1.sample(n=min_size, random_state=random_state)
+                        df = pd.concat([df_0_s, df_1_s]).sample(frac=1, random_state=random_state)
+                    else:
+                        df = df.sample(frac=1, random_state=random_state)
             else:
-                print(f"⚠ Could not balance ICL: one label group is empty. Using all available.")
-                df = df.sample(frac=1, random_state=random_state)
+                # Simple label balancing if no sensitive attributes
+                df_0 = df[df[label_col].astype(str).isin(['0', '0.0', 'bad credit risk', 'income <=50K'])]
+                df_1 = df[df[label_col].astype(str).isin(['1', '1.0', 'good credit risk', 'income >50K'])]
+                min_size = min(len(df_0), len(df_1))
+                if min_size > 0:
+                    df_0_s = df_0.sample(n=min_size, random_state=random_state)
+                    df_1_s = df_1.sample(n=min_size, random_state=random_state)
+                    df = pd.concat([df_0_s, df_1_s]).sample(frac=1, random_state=random_state)
+                    print(f"✓ Balanced ICL by Label: {len(df)} samples ({min_size} per label)")
+                else:
+                    df = df.sample(frac=1, random_state=random_state)
         else:
             print(f"Shuffling data with random_state={random_state}...")
             df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
             print(f"✓ Data shuffled")
+    
+    # NEW: Print ICL distribution
+    label_col = 'label' if 'label' in df.columns else ('class-label' if 'class-label' in df.columns else None)
+    count_cols = []
+    if label_col:
+        count_cols.append(label_col)
+    if sensitive_attrs:
+        for attr in sensitive_attrs:
+            if attr in df.columns and attr not in count_cols:
+                count_cols.append(attr)
+    
+    if count_cols:
+        print(f"\nICL Example Distribution:")
+        counts = df.groupby(count_cols).size()
+        for group, count in counts.items():
+            if isinstance(group, (tuple, list)):
+                group_str = ", ".join([f"{col}: {val}" for col, val in zip(count_cols, group)])
+            else:
+                group_str = f"{count_cols[0]}: {group}"
+            print(f"  - {group_str}: {count}")
     
     # Use all examples from balanced/shuffled set
     df_sample = df
     
     # Format examples with labels according to template
     examples = []
-    for idx, row in df_sample.iterrows():
+    for i, (idx, row) in enumerate(df_sample.iterrows(), 1):
         sentence = row['sentence']
         label = row.get('label', None)
         
@@ -347,7 +494,7 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
                 sentence_clean += f" The income classification for this person is {label_desc}."
         
         # Format as example
-        examples.append(f"Example {idx + 1}: {sentence_clean}")
+        examples.append(f"Example {i}: {sentence_clean}")
     
     icl_text = "\n".join(examples)
     print(f"✓ Loaded {len(df_sample)} in-context examples (all examples from file, with labels formatted according to template)")
@@ -1265,15 +1412,16 @@ Note: Create a .env file in the project root with:
 
     # Generate samples in batches using ThreadPoolExecutor
     target_samples = args.n_examples
-    # reduce default batch size to 50 to avoid token limits
-    if args.max_samples_per_call > 50:
-        print(f"Suggestion: Reducing max_samples_per_call from {args.max_samples_per_call} to 50 for better stability.")
-        max_samples_per_call = 50 
-    else:
-        max_samples_per_call = args.max_samples_per_call
+    # reduce default batch size to 100 to avoid token limits
+    max_samples_per_call = args.max_samples_per_call
+    if max_samples_per_call > 100:
+        print(f"Suggestion: Reducing max_samples_per_call from {max_samples_per_call} to 100 for better stability.")
+        max_samples_per_call = 100 
 
     all_combined_data = []
     all_raw_texts = []
+    seen_sentences = set() # Global unique tracking
+    total_duplicates_ignored = 0
     governor = None
     
     if args.fair:
@@ -1320,11 +1468,12 @@ Note: Create a .env file in the project root with:
             fairness_instruction = ""
             icl_filter = None
             if governor:
-                # Use a lock-safe way to get targets if needed, but here we just read
-                fairness_instruction = governor.get_sampling_targets(n_samples_batch)
                 
                 # Try to extract a filter from the instruction for ICL matching
-                if "groups: " in fairness_instruction:
+                # BUT: If we are in fair mode, we prefer a balanced context over a filtered one
+                # unless the user explicitly wants to narrow the context.
+                # Given user feedback, we will SKIP specific icl_filter in fair mode to ensure balance.
+                if not args.fair and "groups: " in fairness_instruction:
                     try:
                         # Split by the separator between groups (comma space)
                         groups_list = fairness_instruction.split("groups: ")[1].split(", ")
@@ -1345,7 +1494,8 @@ Note: Create a .env file in the project root with:
                 shuffle=not args.no_shuffle,
                 random_state=batch_random_state,
                 dataset_name=args.dataset,
-                filter_dict=icl_filter
+                filter_dict=icl_filter,
+                sensitive_attrs=args.sensitive_attrs.split(',') if args.sensitive_attrs else None
             )
             
             # Format prompt with fairness flag and targeted instruction
@@ -1375,8 +1525,9 @@ Note: Create a .env file in the project root with:
                         desc = "good credit risk"
                     else:
                         desc = "bad credit risk"
-                        
-                    sent = f"A {25+i}-year-old {sex} applicant. The decision is {desc}."
+                    
+                    # Simplified robust mock sentence for easier parsing
+                    sent = f"A {25+i}-year-old {sex} applicant. (Label: {label})"
                     mock_lines.append(f"Example {i+1}: {sent}")
                 
                 generated_text = "\n".join(mock_lines)
@@ -1458,12 +1609,44 @@ Note: Create a .env file in the project root with:
                     
                     batch_combined_data = filter_valid_samples(batch_combined_data, validation_results)
                     print(f"  [Batch {batch_id}] Validation complete: {len(batch_combined_data)} valid samples")
-                    
                 except Exception as e:
                     print(f"  [Batch {batch_id}] ⚠ Validation error: {e}")
                     # On validation code error, maybe better to discard batch to be safe, or keep?
                     # Let's keep for now but warn
                     pass
+                # (3) Batch-level Label Balancing: Ensure label 0 count == label 1 count
+                if args.fair and batch_combined_data:
+                    labels = [str(entry.get('class-label', entry.get('label', 'unknown'))) for entry in batch_combined_data]
+                    from collections import Counter
+                    counts = Counter(labels)
+                    
+                    # Normalize counts for comparison (using '0' and '1' as strings)
+                    c0 = counts.get('0', 0)
+                    c1 = counts.get('1', 0)
+                    
+                    if args.fair and c0 != c1:
+                        target_n = min(c0, c1)
+                        if target_n > 0:
+                            print(f"  [Batch {batch_id}] Balancing batch labels: {c0} (0), {c1} (1) -> Target: {target_n} each")
+                            
+                            # Categorize by label
+                            data_0 = [e for e in batch_combined_data if str(e.get('class-label', e.get('label', 'unknown'))) == '0']
+                            data_1 = [e for e in batch_combined_data if str(e.get('class-label', e.get('label', 'unknown'))) == '1']
+                            
+                            # Sample down
+                            import random
+                            random.seed(batch_random_state)
+                            if len(data_0) > target_n:
+                                data_0 = random.sample(data_0, target_n)
+                            if len(data_1) > target_n:
+                                data_1 = random.sample(data_1, target_n)
+                                
+                            batch_combined_data = data_0 + data_1
+                            random.shuffle(batch_combined_data)
+                            print(f"  [Batch {batch_id}] Batch re-balanced: {len(batch_combined_data)} samples total")
+                        else:
+                            print(f"  [Batch {batch_id}] ⚠ One label group is empty. Keeping all {len(batch_combined_data)} samples for global balancing.")
+                            # We keep the data even if unbalanced, FairnessGovernor.balance_dataset will fix it globally.
             
             return batch_combined_data, generated_text
             
@@ -1491,75 +1674,87 @@ Note: Create a .env file in the project root with:
         for i in range(n_batches_estimated):
             futures.append(executor.submit(process_batch, i+1, max_samples_per_call, validation_assets))
             
-        # Collect results as they complete
-        for future in concurrent.futures.as_completed(futures):
-            batch_data, raw_text = future.result()
+        current_batch_id = n_batches_estimated
+        
+        # Collect results and dynamically schedule more if needed
+        while futures:
+            # Wait for any future to complete
+            done, futures = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+            futures = list(futures) # Convert back to list for manipulation
             
-            if raw_text:
-                all_raw_texts.append(raw_text)
-            
-            if batch_data:
-                with data_lock:
-                    all_combined_data.extend(batch_data)
-                    total_valid_collected = len(all_combined_data)
+            for future in done:
+                batch_data, raw_text = future.result()
+                
+                if raw_text:
+                    all_raw_texts.append(raw_text)
+                
+                if batch_data:
+                    with data_lock:
+                        # Incremental Global Deduplication
+                        unique_batch_data = []
+                        for entry in batch_data:
+                            s_clean = entry.get('sentence', '').strip().lower()
+                            if s_clean and s_clean not in seen_sentences:
+                                seen_sentences.add(s_clean)
+                                unique_batch_data.append(entry)
+                            else:
+                                total_duplicates_ignored += 1
+                        
+                        if unique_batch_data:
+                            all_combined_data.extend(unique_batch_data)
+                            total_valid_collected = len(all_combined_data)
+                            if governor:
+                                governor.update(unique_batch_data)
+                    
+                    status_msg = f"Progress update: {total_valid_collected}/{target_samples} unique valid samples"
+                    if total_duplicates_ignored > 0:
+                        status_msg += f" ({total_duplicates_ignored} duplicates ignored so far)"
                     if governor:
-                        governor.update(batch_data)
+                        status_msg += f"\n  Current distribution: {governor.get_shortfall_report()}"
+                    print(f"\n[Generation] {status_msg}")
                 
-                status_msg = f"Progress update: {total_valid_collected}/{target_samples} valid samples"
+                # Terminate condition check
+                target_met = False
                 if governor:
-                    status_msg += f"\n  Current distribution: {governor.get_shortfall_report()}"
-                print(status_msg)
+                    target_met = governor.is_target_met()
+                else:
+                    target_met = total_valid_collected >= target_samples
                 
-            # Check if we have enough data to cancel pending (optional optimization)
-            if total_valid_collected >= target_samples:
-                print(f"Target met ({total_valid_collected} samples). Cancelling pending batches...")
-                for f in futures:
-                    f.cancel()
-                break
+                # If we still need more samples and haven't exceeded some reasonable limit
+                # We use a high ceiling (100 or 10x estimated) to allow for many duplicates/invalidations
+                batch_limit = max(100, n_batches_estimated * 10)
+                if not target_met and current_batch_id < batch_limit:
+                    current_batch_id += 1
+                    print(f"Target distribution not yet met ({total_valid_collected} total). Scheduling additional batch {current_batch_id}...")
+                    futures.append(executor.submit(process_batch, current_batch_id, max_samples_per_call, validation_assets))
+                
+                # Check if we have enough quality data to cancel pending
+                if target_met:
+                    if futures:
+                        print(f"Subgroup-aware target met ({total_valid_collected} total). Cancelling {len(futures)} pending batches...")
+                        for f in futures:
+                            f.cancel()
+                        futures = [] # Exit outer while loop
+                    break
 
-    # Final trimming
-    if len(all_combined_data) > target_samples:
-        if governor:
-            print(f"\nTarget exceeded. Performing fairness-aware balancing to exactly {target_samples} samples...")
-            all_combined_data = governor.balance_dataset(all_combined_data, target_samples)
-        else:
-            print(f"\nTarget exceeded. Trimming to exactly {target_samples} samples.")
-            all_combined_data = all_combined_data[:target_samples]
-    
-    # Post-processing: Global Duplicate Check
-    if not args.no_validate and all_combined_data:
-        print(f"\nRunning final global duplicate check on {len(all_combined_data)} samples...")
-        try:
-             # Just check simple string uniqueness within the generated set
-             seen_sentences = set()
-             unique_data = []
-             duplicates = 0
-             for entry in all_combined_data:
-                 s_lower = entry['sentence'].strip().lower()
-                 if s_lower not in seen_sentences:
-                     seen_sentences.add(s_lower)
-                     unique_data.append(entry)
-                 else:
-                     duplicates += 1
-             
-             if duplicates > 0:
-                 print(f"  Removed {duplicates} global duplicates.")
-                 all_combined_data = unique_data
-                 
-                 # If we dropped below target after dedup, we might need more...
-                 # But for now let's just accept it or would complexify logic too much.
-                 if len(all_combined_data) < target_samples:
-                     print(f"  ⚠ Warning: After removing duplicates, count dropped to {len(all_combined_data)} < {target_samples}")
-                     
-        except Exception as e:
-            print(f"  ⚠ Global dedup failed: {e}")
+    # Final trimming and balancing
+    if governor:
+        print(f"\nFinal global count: {len(all_combined_data)}")
+        governor.print_distribution_table()
+        print(f"Performing fairness-aware balancing to exactly {target_samples} samples...")
+        all_combined_data = governor.balance_dataset(all_combined_data, target_samples, validation_assets=validation_assets)
+    elif len(all_combined_data) > target_samples:
+        print(f"\nTarget exceeded. Trimming to exactly {target_samples} samples.")
+        all_combined_data = all_combined_data[:target_samples]
     
     combined_data = all_combined_data
-    print(f"\n✓ Total: {len(combined_data)} valid samples collected")
+    print(f"\n✓ Collected {len(combined_data)} unique valid samples total.")
+    if total_duplicates_ignored > 0:
+        print(f"  ({total_duplicates_ignored} duplicate entries were filtered during generation)")
     
     if governor:
-        print(f"\nFinal Fairness Report:")
-        print(governor.get_shortfall_report())
+        print(f"\nFinal Fairness Report after balancing:")
+        governor.print_distribution_table(all_combined_data)
     
     # Validation is already done during generation loop
     n_after_validation = len(combined_data)
