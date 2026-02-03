@@ -32,10 +32,12 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
     - Each head uses attention pooling + VAE bottleneck (for compression only)
     - 2 separate decoders: D_c(z_c) and D_d(z_d) for additive reconstruction
     
-    LIRD OBJECTIVES (HSIC-based, no adversarial training):
+    TRAINING OBJECTIVES (Adversarial + HSIC-based):
     1. L_task: z_c → y (high accuracy) - z_c contains task-relevant info
-    2. L_y: HSIC(z_d, y) (minimize) - z_d is independent of task label y
-    3. L_ind: HSIC(z_c, z_d) (minimize) - z_c and z_d are statistically independent
+    2. L_adv: Adversarial training via GRL - z_d is independent of task label y
+       - Adversarial Classifier learns to predict y from z_d
+       - Encoder learns to confuse Classifier via Gradient Reversal Layer (GRL)
+    3. L_ortho: HSIC(z_c, z_d) (minimize) - z_c and z_d are statistically independent
     4. L_rec: ||D_c(z_c) + D_d(z_d) - h||² (minimize) - additive reconstruction
     
     + L_kl: VAE KL regularization KL(q(z_c|x)||N(0,I)) + KL(q(z_d|x)||N(0,I))
@@ -45,17 +47,17 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
             - Normalized distribution (prevents sampling outside manifold)
     + L_var: Variance/energy constraint on z_d to prevent collapse to noise
     
-    NOTE: VAE is used for compression (768 → latent_dim) AND generation (can sample z ~ N(0,I) and decode).
-    NOTE: No GRL/adversarial training - pure HSIC-based LIRD framework.
+    NOTE: VAE is used for compression (768 → latent_dim) AND generation.
+    NOTE: Uses Adversarial training with GRL for z_d independence (more intuitive than HSIC).
     """
     print(f"\n{'='*70}")
     print("TRAINING CONFIGURATION")
     print(f"{'='*70}")
     print(f"Epochs: {num_epochs}, Batch size: {batch_size}, LR: {lr}")
     print(f"Latent dim: {latent_dim}")
-    print(f"\nLIRD OBJECTIVES (HSIC-based):")
+    print(f"\nTRAINING OBJECTIVES (Adversarial + HSIC):")
     print(f"  1. λ_task={lambda_task} : z_c → y (target: high accuracy ~1.0)")
-    print(f"  2. λ_adv={lambda_adv} : HSIC(z_d, y) (target: ~0, label-independence)")
+    print(f"  2. λ_adv={lambda_adv} : Adversarial(z_d, y) via GRL (target: Acc ~0.5, random)")
     print(f"  3. λ_ortho={lambda_ortho} : HSIC(z_c, z_d) (target: ~0, disentangle)")
     print(f"  4. λ_rec={lambda_rec} : ||D_c(z_c) + D_d(z_d) - h||² (target: ~0, reconstruction)")
     print(f"\n  + λ_kl={lambda_kl} : VAE KL regularization KL(q(z_c|x)||N(0,I)) + KL(q(z_d|x)||N(0,I))")
@@ -141,9 +143,11 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
         prefetch_factor=prefetch_factor if num_workers > 0 else None  # Prefetch batches
     )
     
-    # Use shared BERT + 2 heads with VAE bottleneck (trainable, not frozen)
-    # VAE bottleneck compresses from 768 to latent_dim for better disentanglement
-    model = CD_Model(num_classes=num_classes, d_model=768, latent_dim=latent_dim, freeze_bert=False).to(device)
+    # Use shared BERT + 2 heads with VAE bottleneck
+    # BERT is FROZEN - only train Heads, Decoders, and Classifiers
+    # This speeds up training and focuses learning on disentanglement
+    model = CD_Model(num_classes=num_classes, d_model=768, latent_dim=latent_dim, freeze_bert=True).to(device)
+    print("✓ BERT encoder is FROZEN - only training Heads + Decoders + Classifiers")
     
     # Compile model for faster training (PyTorch 2.0+)
     # NOTE: torch.compile() can cause issues with gradient tracking when freezing/unfreezing parameters
@@ -161,19 +165,18 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
     else:
         print("ℹ Model compilation disabled (to avoid gradient tracking issues with freeze/unfreeze)")
     
-    # Optimizers with different learning rates
-    # BERT needs smaller LR, heads/decoder can use slightly higher
-    # Separate BERT optimizer with smaller LR (BERT standard: 1e-5 to 5e-5)
-    bert_lr = lr  # Use provided LR (should be ~2e-5 for BERT)
-    head_lr = lr * 2.0  # Heads can learn faster
+    # Optimizers - BERT is frozen, only train Heads + Decoders
+    head_lr = lr * 2.0  # Heads can learn faster since BERT is frozen
     
-    optimizer = optim.AdamW([
-        {'params': model.bert.parameters(), 'lr': bert_lr},
-        {'params': list(model.content_head.parameters()) + 
-                  list(model.demographic_head.parameters()) + 
-                  list(model.decoder_c.parameters()) + 
-                  list(model.decoder_d.parameters()), 'lr': head_lr}
-    ], weight_decay=0.01)  # AdamW with weight decay for better BERT training
+    # Only include trainable parameters (Heads and Decoders)
+    optimizer = optim.AdamW(
+        list(model.content_head.parameters()) + 
+        list(model.demographic_head.parameters()) + 
+        list(model.decoder_c.parameters()) + 
+        list(model.decoder_d.parameters()),
+        lr=head_lr,
+        weight_decay=0.01
+    )
     
     # Separate optimizer for classifier with higher LR for faster learning
     optimizer_classifier = optim.Adam(
@@ -238,17 +241,17 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                 attention_mask = batch['attention_mask'].to(device, non_blocking=True)
                 labels_batch = batch['label'].to(device, non_blocking=True)
                 
-                # === MAIN TRAINING STEP (LIRD Framework) ===
-                # LIRD uses HSIC instead of adversarial training:
+                # === MAIN TRAINING STEP (Adversarial + HSIC Framework) ===
+                # Uses adversarial training for z_d independence:
+                # - Adversarial Classifier: learns to predict y from z_d
+                # - Encoder: learns to confuse Classifier via GRL
                 # - HSIC(z_c, z_d): Ensures z_c and z_d are statistically independent
-                # - HSIC(z_d, y): Ensures z_d is independent of task label y
-                # No need for adversarial classifier training with GRL
                 
                 optimizer.zero_grad()
                 # Forward pass
                 output = model(input_ids, attention_mask)
                 
-                # ============ LIRD LOSS COMPONENTS ============
+                # ============ LOSS COMPONENTS ============
                 # 1. L_task: z_c → y (MINIMIZE) - sufficiency (z_c is minimal sufficient for y)
                 loss_task = nn.functional.cross_entropy(
                     output['logits_y_from_z_c'], 
@@ -256,16 +259,35 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                     weight=class_weights
                 )
                 
-                # 2. L_ind: HSIC(z_c, z_d) (MINIMIZE) - disentangle
+                # 2. L_ortho: HSIC(z_c, z_d) (MINIMIZE) - disentangle
                 # Ensures z_c and z_d are statistically independent
                 loss_ind = compute_hsic(output['z_c'], output['z_d'])
                 
-                # 3. L_y: HSIC(z_d, y) (MINIMIZE) - label-independence
-                # Ensures z_d is independent of task label y
-                # Convert labels to one-hot for HSIC computation
-                labels_onehot = torch.zeros(labels_batch.size(0), num_classes, device=labels_batch.device)
-                labels_onehot.scatter_(1, labels_batch.unsqueeze(1), 1.0)
-                loss_y = compute_hsic(output['z_d'], labels_onehot)
+                # ============ TRAIN ADVERSARIAL CLASSIFIER (Step 1) ============
+                # Adversarial Classifier tries to predict y from z_d
+                # Goal: Classifier gets high accuracy (learns to predict y from z_d)
+                num_adv_steps = 3  # Train adversarial classifier multiple times
+                for _ in range(num_adv_steps):
+                    optimizer_adv.zero_grad()
+                    z_d_detached = output['z_d'].detach()  # Detach to avoid gradient to encoder
+                    logits_adv = model.adversarial_classifier(z_d_detached)
+                    loss_adv_classifier = nn.functional.cross_entropy(logits_adv, labels_batch, weight=class_weights)
+                    if scaler is not None:
+                        scaler.scale(loss_adv_classifier).backward()
+                        scaler.step(optimizer_adv)
+                        scaler.update()
+                    else:
+                        loss_adv_classifier.backward()
+                        optimizer_adv.step()
+                
+                # 3. L_adv: Adversarial loss for encoder (via GRL)
+                # Encoder should make z_d that CANNOT be used to predict y
+                # Use GRL to reverse gradient: encoder learns to confuse classifier
+                from .models import GRL
+                grl = GRL(lambda_grl=1.0)
+                z_d_reversed = grl(output['z_d'])  # Apply gradient reversal
+                logits_adv_for_encoder = model.adversarial_classifier(z_d_reversed)
+                loss_y = nn.functional.cross_entropy(logits_adv_for_encoder, labels_batch, weight=class_weights)
                 
                 # 4. L_rec: z_c + z_d → x (MINIMIZE) - reconstruction
                 loss_rec = compute_reconstruction_loss(output['original_h'], output['reconstructed'])
@@ -315,21 +337,19 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                     weight=class_weights
                 )
                 
-                # ============ COMBINED ENCODER LOSS (LIRD Framework) ============
-                # Following LIRD: min_θ L_task(y, C(z_c)) + λ_rec ||D_c(z_c) + D_d(z_d) - h||² 
-                #                  + λ_ind HSIC(z_c, z_d) + λ_y HSIC(z_d, y)
+                # ============ COMBINED ENCODER LOSS (Adversarial + HSIC) ============
                 # 1. L_task: z_c → y (MINIMIZE → Acc ~1.0) - sufficiency
-                # 2. L_rec: D_c(z_c) + D_d(z_d) → h (MINIMIZE → 0) - additive reconstruction
-                # 3. L_ind: HSIC(z_c, z_d) (MINIMIZE → 0) - disentangle
-                # 4. L_y: HSIC(z_d, y) (MINIMIZE → 0) - label-independence
+                # 2. L_rec: D_c(z_c) + D_d(z_d) → h (MINIMIZE → 0) - reconstruction
+                # 3. L_ortho: HSIC(z_c, z_d) (MINIMIZE → 0) - disentangle
+                # 4. L_adv: Adversarial loss via GRL (confuse classifier → Acc ~0.5)
                 # + L_kl: VAE KL regularization to N(0,I) (smooth latent space + generation)
                 # + L_var: Variance/energy constraint to prevent z_d collapse
                 
                 loss_enc = (
                     lambda_task * loss_task_updated +    # 1. L_task: sufficiency
                     lambda_rec * loss_rec +              # 2. L_rec: additive reconstruction
-                    lambda_ortho * loss_ind +            # 3. L_ind: HSIC(z_c, z_d) - disentangle
-                    lambda_adv * loss_y +                # 4. L_y: HSIC(z_d, y) - label-independence
+                    lambda_ortho * loss_ind +            # 3. L_ortho: HSIC(z_c, z_d) - disentangle
+                    lambda_adv * loss_y +                # 4. L_adv: Adversarial via GRL - label-independence
                     lambda_kl * loss_kl +                # VAE regularization
                     lambda_var * loss_var                # Variance/energy constraint (prevent collapse)
                 )
@@ -346,17 +366,17 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                 # Accumulate losses for monitoring:
                 # - loss_enc: Combined loss (used for training)
                 # - Individual losses: Track each component separately for debugging
-                loss_enc_total += loss_enc.item()              # Combined: λ_task*L_task + λ_rec*L_rec + λ_ind*HSIC(z_c,z_d) + λ_y*HSIC(z_d,y) + λ_kl*L_kl + λ_var*L_var
+                loss_enc_total += loss_enc.item()              # Combined: λ_task*L_task + λ_rec*L_rec + λ_ortho*HSIC(z_c,z_d) + λ_adv*L_adv + λ_kl*L_kl + λ_var*L_var
                 loss_task_total += loss_task_updated.item()    # 1. L_task: z_c → y (sufficiency)
-                loss_adv_total += loss_y.item()                # 2. L_y: HSIC(z_d, y) (label-independence)
-                loss_ortho_total += loss_ind.item()            # 3. L_ind: HSIC(z_c, z_d) (disentangle)
+                loss_adv_total += loss_y.item()                # 2. L_adv: Adversarial via GRL (label-independence)
+                loss_ortho_total += loss_ind.item()            # 3. L_ortho: HSIC(z_c, z_d) (disentangle)
                 loss_rec_total += loss_rec.item()              # 4. L_rec: D_c(z_c) + D_d(z_d) → h (additive reconstruction)
                 loss_kl_total += loss_kl.item()                # 5. L_kl: VAE regularization
                 loss_var_total += loss_var.item()              # 6. L_var: Variance/energy constraint (prevent collapse)
                 
                 with torch.no_grad():
-                    # Compute accuracy from z_d using adversarial classifier (for monitoring only, not trained)
-                    # In LIRD, we use HSIC(z_d, y) instead of adversarial training
+                    # Compute accuracy from z_d using adversarial classifier (for monitoring)
+                    # Goal: Acc(z_d → y) should be ~0.5 (random) after training
                     z_d_for_acc = output['z_d'].detach()
                     logits_y_from_z_d_monitor = model.adversarial_classifier(z_d_for_acc)
                     pred_z_d = logits_y_from_z_d_monitor.argmax(1)
@@ -493,11 +513,11 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
     per_class_acc_z_d_final = history['per_class_acc_z_d'][-1] if len(history['per_class_acc_z_d']) > 0 else 0.0
     per_class_acc_z_c_final = history['per_class_acc_z_c'][-1] if len(history['per_class_acc_z_c']) > 0 else 0.0
     
-    print(f"\nLIRD OBJECTIVES - Final Results:")
+    print(f"\nTRAINING OBJECTIVES (Adversarial + HSIC) - Final Results:")
     print(f"  1. L_task (z_c → y): Acc={history['acc_task_from_z_c'][-1]:.3f} (target: ~1.0) - sufficiency")
-    print(f"  2. L_y (HSIC(z_d, y)): {history['loss_adv'][-1]:.4f} (target: ~0) - label-independence")
-    print(f"     Acc(z_d → y): {history['acc_task_from_z_d'][-1]:.3f} (target: {random_target_str})")
-    print(f"  3. L_ind (HSIC(z_c, z_d)): {history['loss_ortho'][-1]:.4f} (target: ~0) - disentangle")
+    print(f"  2. L_adv (Adversarial): Loss={history['loss_adv'][-1]:.4f} - label-independence via GRL")
+    print(f"     Acc(z_d → y): {history['acc_task_from_z_d'][-1]:.3f} (target: {random_target_str}) - should be random!")
+    print(f"  3. L_ortho (HSIC(z_c, z_d)): {history['loss_ortho'][-1]:.4f} (target: ~0) - disentangle")
     print(f"  4. L_rec (reconstruction): {history['loss_rec'][-1]:.4f} (target: ~0) - additive reconstruction")
     print(f"\n  + L_kl (VAE KL to N(0,I)): {history['loss_kl'][-1]:.4f} (smooth latent space + generation)")
     print(f"  + L_var (variance/energy constraint): {history['loss_var'][-1]:.4f} (prevent z_d collapse)")

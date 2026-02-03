@@ -1,61 +1,233 @@
 {
   "german-credit-data": {
     "sentences": [
-      "A {age}-year-old {sex} applicant with {marital_status} status, working as {job}.",
-      "The request is {credit_amount} for {purpose} over {duration} months, with checking account {checking_account} and savings account {savings_account}.",
-      "The person lists credit history {credit_history}, employment since {employment_since}, {installment_rate} installment rate, and {other_debtors} other debtors.",
-      "Current details include residence since {residence_since} years, property {property}, {other_installment} other installment plans, housing {housing}, and {existing_credits} existing credits.",
-      "The person supports {num_people}, {telephone} telephone access, and has {foreign_worker} foreign-worker status.",
-      "The credit application has been evaluated and the decision is {label}, where {label} represents the credit risk classification (0 for good credit risk, 1 for bad credit risk)."
+      "A {age}-year-old {sex} applicant with {marital-status} status works as {job}.",
+      "The applicant requests {credit-amount} DM for {purpose} over {duration} months, with checking account status {checking-account} and savings of {savings-account}.",
+      "The applicant has credit history {credit-history}, employed for {employment-since}, with {installment-rate} installment rate and {other-debtors} other debtors.",
+      "The applicant has lived at current residence for {residence-since} years, owns {property} as property, has {other-installment} other installment plans, {housing} housing, and {existing-credits} at this bank.",
+      "The applicant supports {number-people-provide-maintenance-for}, {telephone} telephone, and is {foreign-worker} foreign worker.",
+      "The credit decision is {class-label}."
     ],
     "field_mapping": {
-      "age": ["age", "Age"],
-      "sex": ["sex", "Sex", "gender", "Gender"],
-      "marital_status": ["marital-status", "marital_status", "Marital-Status"],
-      "job": ["job", "Job", "occupation", "Occupation"],
-      "credit_amount": ["credit-amount", "credit_amount", "Credit-Amount"],
-      "duration": ["duration", "Duration"],
-      "purpose": ["purpose", "Purpose"],
-      "checking_account": ["checking-account", "checking_account", "Checking-Account"],
-      "savings_account": ["savings-account", "savings_account", "Savings-Account"],
-      "credit_history": ["credit-history", "credit_history", "Credit-History"],
-      "employment_since": ["employment-since", "employment_since", "Employment-Since"],
-      "installment_rate": ["installment-rate", "installment_rate", "Installment-Rate"],
-      "other_debtors": ["other-debtors", "other_debtors", "Other-Debtors"],
-      "residence_since": ["residence-since", "residence_since", "Residence-Since"],
-      "property": ["property", "Property"],
-      "other_installment": ["other-installment", "other_installment", "Other-Installment"],
-      "housing": ["housing", "Housing"],
-      "existing_credits": ["existing-credits", "existing_credits", "Existing-Credits"],
-      "num_people": ["number-people-provide-maintenance-for", "number_people_provide_maintenance_for", "Number-People-Provide-Maintenance-For"],
-      "telephone": ["telephone", "Telephone"],
-      "foreign_worker": ["foreign-worker", "foreign_worker", "Foreign-Worker"],
-      "label": ["label", "Label", "credit_risk", "credit-risk", "Credit-Risk", "decision", "Decision"]
-    }
+      "checking-account": "checking-account",
+      "duration": "duration",
+      "credit-history": "credit-history",
+      "purpose": "purpose",
+      "credit-amount": "credit-amount",
+      "savings-account": "savings-account",
+      "employment-since": "employment-since",
+      "installment-rate": "installment-rate",
+      "other-debtors": "other-debtors",
+      "residence-since": "residence-since",
+      "property": "property",
+      "age": "age",
+      "other-installment": "other-installment",
+      "housing": "housing",
+      "existing-credits": "existing-credits",
+      "job": "job",
+      "number-people-provide-maintenance-for": "number-people-provide-maintenance-for",
+      "telephone": "telephone",
+      "foreign-worker": "foreign-worker",
+      "sex": "sex",
+      "marital-status": "marital-status",
+      "class-label": "class-label"
+    },
+    "value_transforms": {
+      "telephone": {
+        "yes": "has",
+        "none": "has no"
+      },
+      "foreign-worker": {
+        "yes": "a",
+        "no": "not a"
+      },
+      "other-debtors": {
+        "none": "no"
+      },
+      "other-installment": {
+        "none": "no"
+      }
+    },
+    "sensitive_attr": "sex",
+    "label_col": "class-label"
   },
   "adult": {
     "sentences": [
-        "A {age}-year-old {gender} with race {race}, marital status {marital_status}, and relationship {relationship}.",
-        "This person works as {occupation} in {workclass}, with {education} education (level {educational_num}), working {hours_per_week} hours per week.",
-        "Capital gain is {capital_gain}, capital loss is {capital_loss}, native country is {native_country}, and fnlwgt is {fnlwgt}.",
-        "The income classification for this person is {label}, where {label} indicates whether the annual income is above 50K (1) or below 50K (0)."
+      "A {age}-year-old {gender} of {race} race is {marital-status} and serves as {relationship} in the household.",
+      "The individual is employed as {occupation} in the {workclass} sector, with {education} education at level {educational-num}.",
+      "The individual works {hours-per-week} hours per week, with capital gain {capital-gain} and capital loss {capital-loss}.",
+      "The individual is from {native-country}, with census weight {fnlwgt}.",
+      "The income classification is {class-label}."
     ],
     "field_mapping": {
-      "age": ["age"],
-      "gender": ["gender", "sex"],
-      "race": ["race"],
-      "marital_status": ["marital-status", "marital_status"],
-      "relationship": ["relationship"],
-      "workclass": ["workclass"],
-      "education": ["education"],
-      "educational_num": ["educational-num", "educational_num"],
-      "occupation": ["occupation"],
-      "hours_per_week": ["hours-per-week", "hours_per_week"],
-      "capital_gain": ["capital-gain", "capital_gain"],
-      "capital_loss": ["capital-loss", "capital_loss"],
-      "native_country": ["native-country", "native_country"],
-      "fnlwgt": ["fnlwgt"],
-      "label": ["label", "Label", "income", "Income", "income_class", "income-class", "Income-Class", "decision", "Decision"]
-    }
+      "age": "age",
+      "workclass": "workclass",
+      "fnlwgt": "fnlwgt",
+      "education": "education",
+      "educational-num": "educational-num",
+      "marital-status": "marital-status",
+      "occupation": "occupation",
+      "relationship": "relationship",
+      "race": "race",
+      "gender": "gender",
+      "capital-gain": "capital-gain",
+      "capital-loss": "capital-loss",
+      "hours-per-week": "hours-per-week",
+      "native-country": "native-country",
+      "class-label": "class-label"
+    },
+    "sensitive_attr": "gender",
+    "label_col": "class-label"
+  },
+  "bank-marketing": {
+    "sentences": [
+      "A {age}-year-old {marital} client with {education} education is employed as {job}.",
+      "The client has {default} credit default, balance of {balance} euros, {housing} housing loan, and {loan} personal loan.",
+      "The client was contacted via {contact} on day {day} of {month}, with call duration {duration} seconds.",
+      "The campaign involved {campaign} contacts, with {pdays} days since last contact, {previous} previous contacts, and outcome {poutcome}.",
+      "The subscription decision is {class-label}."
+    ],
+    "field_mapping": {
+      "age": "age",
+      "job": "job",
+      "marital": "marital",
+      "education": "education",
+      "default": "default",
+      "balance": "balance",
+      "housing": "housing",
+      "loan": "loan",
+      "contact": "contact",
+      "day": "day",
+      "month": "month",
+      "duration": "duration",
+      "campaign": "campaign",
+      "pdays": "pdays",
+      "previous": "previous",
+      "poutcome": "poutcome",
+      "class-label": "class-label"
+    },
+    "value_transforms": {
+      "default": {
+        "yes": "a",
+        "no": "no"
+      },
+      "housing": {
+        "yes": "a",
+        "no": "no"
+      },
+      "loan": {
+        "yes": "a",
+        "no": "no"
+      },
+      "class-label": {
+        "yes": "subscribed",
+        "no": "not subscribed",
+        "1": "subscribed",
+        "0": "not subscribed"
+      }
+    },
+    "sensitive_attr": "age",
+    "label_col": "class-label"
+  },
+  "credit-scoring": {
+    "sentences": [
+      "A {age}-year-old {sex} with marital status {marital} speaks language {language} and lives in region {region}.",
+      "The individual was born on day {day-of-birth} of month {month-of-birth}, with {has-credit} existing credit in field {field}.",
+      "The individual has {number_of_credits} credits and {linked-cards} linked cards, with INPS sum of {inps_mln_sum} million and INPS status {inps-yes-no}.",
+      "The individual holds score level {score-level} in class {score-class} with {score_point} points, and phone changed is {changed-phone-number}.",
+      "The credit application decision is {class-label}."
+    ],
+    "field_mapping": {
+      "age": "age",
+      "language": "language",
+      "sex": "sex",
+      "marital": "marital",
+      "has-credit": "has-credit",
+      "field": "field",
+      "month-of-birth": "month-of-birth",
+      "day-of-birth": "day-of-birth",
+      "region": "region",
+      "number_of_credits": "number_of_credits",
+      "linked-cards": "linked-cards",
+      "inps_mln_sum": "inps_mln_sum",
+      "inps-yes-no": "inps-yes-no",
+      "score-level": "score-level",
+      "score-class": "score-class",
+      "score_point": "score_point",
+      "changed-phone-number": "changed-phone-number",
+      "class-label": "class-label"
+    },
+    "value_transforms": {
+      "sex": {
+        "1": "male",
+        "2": "female",
+        "1.0": "male",
+        "2.0": "female"
+      },
+      "has-credit": {
+        "1": "yes",
+        "2": "no",
+        "1.0": "yes",
+        "2.0": "no"
+      },
+      "changed-phone-number": {
+        "0": "no",
+        "1": "yes",
+        "0.0": "no",
+        "1.0": "yes"
+      },
+      "class-label": {
+        "0": "approved",
+        "1": "rejected",
+        "0.0": "approved",
+        "1.0": "rejected"
+      }
+    },
+    "sensitive_attr": "sex",
+    "label_col": "class-label"
+  },
+  "dutch-census": {
+    "sentences": [
+      "A {age}-year-old {sex} with marital status {marital_status} holds household position {household_position} in a household of size {household_size}.",
+      "The individual previously resided in {prev_residence_place}, holds {citizenship} citizenship, and was born in {country_birth}.",
+      "The individual has education level {edu_level}, economic status {economic_status}, and current economic activity {cur_eco_activity}.",
+      "The occupation classification is {occupation}."
+    ],
+    "field_mapping": {
+      "sex": "sex",
+      "age": "age",
+      "household_position": "household_position",
+      "household_size": "household_size",
+      "prev_residence_place": "prev_residence_place",
+      "citizenship": "citizenship",
+      "country_birth": "country_birth",
+      "edu_level": "edu_level",
+      "economic_status": "economic_status",
+      "cur_eco_activity": "cur_eco_activity",
+      "marital_status": "marital_status",
+      "occupation": "occupation"
+    },
+    "value_transforms": {
+      "occupation": {
+        "0": "low-level",
+        "1": "high-level",
+        "0.0": "low-level",
+        "1.0": "high-level"
+      },
+      "citizenship": {
+        "1": "Dutch",
+        "2": "non-Dutch"
+      },
+      "country_birth": {
+        "1": "Netherlands",
+        "2": "elsewhere"
+      },
+      "prev_residence_place": {
+        "1": "Netherlands",
+        "2": "elsewhere"
+      }
+    },
+    "sensitive_attr": "sex",
+    "label_col": "occupation"
   }
 }

@@ -81,12 +81,29 @@ def format_sentence_from_template(row, template_config):
         Formatted sentence string
     """
     def get_val(field_name):
-        """Get value from row using field mapping variants."""
-        variants = template_config['field_mapping'].get(field_name, [field_name])
-        for variant in variants:
-            val = row.get(variant)
+        """Get value from row using field mapping."""
+        mapping = template_config['field_mapping'].get(field_name)
+        
+        # Handle both old format (list) and new format (string)
+        if mapping is None:
+            # Try the field_name directly
+            val = row.get(field_name)
             if pd.notna(val) and str(val).strip():
                 return str(val).strip()
+            return None
+        
+        if isinstance(mapping, list):
+            # Old format: list of variants
+            for variant in mapping:
+                val = row.get(variant)
+                if pd.notna(val) and str(val).strip():
+                    return str(val).strip()
+        else:
+            # New format: direct mapping (string -> string)
+            val = row.get(mapping)
+            if pd.notna(val) and str(val).strip():
+                return str(val).strip()
+        
         return None
     
     # Extract all values and normalize special values
@@ -95,8 +112,8 @@ def format_sentence_from_template(row, template_config):
         if not value:
             return None
         
-        # Handle num_people - singular/plural (check first before string conversion)
-        if field_name == 'num_people':
+        # Handle number-people-provide-maintenance-for - singular/plural
+        if 'people' in field_name.lower() or 'maintenance' in field_name.lower():
             try:
                 num = int(float(value))
                 if num == 1:
@@ -106,44 +123,69 @@ def format_sentence_from_template(row, template_config):
             except (ValueError, TypeError):
                 pass
         
-        # Handle existing_credits - singular/plural (check before string conversion)
-        if field_name == 'existing_credits':
+        # Handle existing_credits - singular/plural  
+        if 'credit' in field_name.lower() and 'existing' in field_name.lower():
             try:
                 num = int(float(value))
                 if num == 1:
-                    return '1'
+                    return '1 existing credit'
                 else:
-                    return str(num)
+                    return f'{num} existing credits'
             except (ValueError, TypeError):
                 pass
+        
+        # Convert float to int for integer-like fields (e.g., 34.0 -> 34)
+        try:
+            float_val = float(value)
+            if float_val == int(float_val):
+                value = str(int(float_val))
+            else:
+                value = str(value).strip()
+        except (ValueError, TypeError):
+            value = str(value).strip()
         
         value_str = str(value).strip().lower()
         
         # Handle boolean-like values
         if value_str in ['yes', 'y', '1', 'true']:
-            if field_name == 'telephone':
-                return 'have'
-            elif field_name == 'foreign_worker':
-                return 'a'
+            if 'telephone' in field_name.lower():
+                return 'has'
+            elif 'foreign' in field_name.lower():
+                return 'is a'
             return str(value).strip()  # Keep original for other fields
         
         if value_str in ['no', 'n', '0', 'false', 'none']:
-            if field_name == 'telephone':
-                return 'have no'
-            elif field_name == 'foreign_worker':
-                return 'not a'
-            elif field_name == 'other_debtors' and value_str == 'none':
+            if 'telephone' in field_name.lower():
+                return 'has no'
+            elif 'foreign' in field_name.lower():
+                return 'is not a'
+            elif 'debtor' in field_name.lower() and value_str == 'none':
                 return 'no'
-            elif field_name == 'other_installment' and value_str == 'none':
+            elif 'installment' in field_name.lower() and value_str == 'none':
                 return 'no'
             return str(value).strip()  # Keep original for other fields
         
         return str(value).strip()  # Return original value
     
+    # Check if template has value_transforms
+    value_transforms = template_config.get('value_transforms', {})
+    
     values = {}
     for field_name in template_config['field_mapping'].keys():
         raw_value = get_val(field_name)
-        values[field_name] = normalize_value(raw_value, field_name) if raw_value else None
+        if raw_value:
+            # First check if there's a template-defined transform
+            if field_name in value_transforms:
+                transforms = value_transforms[field_name]
+                raw_lower = str(raw_value).strip().lower()
+                if raw_lower in transforms:
+                    values[field_name] = transforms[raw_lower]
+                else:
+                    values[field_name] = normalize_value(raw_value, field_name)
+            else:
+                values[field_name] = normalize_value(raw_value, field_name)
+        else:
+            values[field_name] = None
     
     # Format each sentence template
     # IMPORTANT: Skip the last sentence (label sentence) to avoid including label in processed_data
@@ -635,7 +677,8 @@ def load_dataset_generic(dataset_name, csv_path=None, n_samples=None, random_sta
     target_col = None
     possible_cols = [
         'class', 'target', 'label', 'y', 'outcome', 'risk',
-        'class-label', 'class_label', 'target-label', 'target_label'
+        'class-label', 'class_label', 'target-label', 'target_label',
+        'occupation'  # dutch-census uses occupation as label
     ]
     for col in possible_cols:
         if col in df.columns:
@@ -677,22 +720,33 @@ def load_dataset_generic(dataset_name, csv_path=None, n_samples=None, random_sta
     sentence_to_row_index = []  # Map: sentences[i] corresponds to df.iloc[sentence_to_row_index[i]]
     
     for idx, row in df.iterrows():
-        # Special handling for specific datasets
-        if dataset_name == 'adult':
-            sentence = format_adult_sentence(row, df.columns)
-        elif dataset_name == 'german-credit-data' or 'german' in dataset_name.lower():
-            sentence = format_german_credit_sentence(row, df.columns)
-        else:
-            # Generic format for other datasets
-            attrs = []
-            for col in df.columns:
-                if col != 'label' and not col.startswith('unnamed'):
-                    val = row[col]
-                    if pd.notna(val):
-                        # Format better: use "is" for cleaner text
-                        attrs.append(f"{col} is {val}")
-            
-            sentence = " ".join(attrs[:10])  # Limit to first 10 attributes
+        sentence = None
+        
+        # Try to use template-based formatting first (highest priority)
+        try:
+            template_config = load_sentence_template(dataset_name)
+            sentence = format_sentence_from_template(row, template_config)
+        except (FileNotFoundError, ValueError, KeyError):
+            # Template not found or error, fallback to specific formatters
+            pass
+        
+        # Fallback: use specific formatter functions
+        if not sentence or len(sentence) < 20:
+            if dataset_name == 'adult':
+                sentence = format_adult_sentence(row, df.columns)
+            elif dataset_name == 'german-credit-data' or 'german' in dataset_name.lower():
+                sentence = format_german_credit_sentence(row, df.columns)
+            else:
+                # Generic format for other datasets (last resort)
+                attrs = []
+                for col in df.columns:
+                    if col != 'label' and not col.startswith('unnamed') and not col.startswith('_'):
+                        val = row[col]
+                        if pd.notna(val):
+                            # Format better: use "is" for cleaner text
+                            attrs.append(f"{col} is {val}")
+                
+                sentence = " ".join(attrs[:10])  # Limit to first 10 attributes
         
         # Preprocess to improve tokenization
         sentence = format_sentence_for_bert(sentence)

@@ -260,7 +260,7 @@ def extract_label_from_label_sentence(label_sentence: str, dataset_name: str) ->
     Extract label value from label sentence.
     
     Args:
-        label_sentence: Label sentence (e.g., "The credit application has been evaluated and the decision is good credit risk.")
+        label_sentence: Label sentence (e.g., "The credit decision is good credit risk.")
         dataset_name: Name of dataset
     
     Returns:
@@ -272,27 +272,67 @@ def extract_label_from_label_sentence(label_sentence: str, dataset_name: str) ->
     label_sentence_lower = label_sentence.lower()
     
     if dataset_name == 'german-credit-data':
-        # Check for "good credit risk" or "bad credit risk"
-        # Correctly matched with data_loader: 1 = good credit risk, 0 = bad credit risk
+        # Format: "The credit decision is [good/bad] credit risk."
         if 'good credit risk' in label_sentence_lower:
             return 1  # 1 = good credit risk
         elif 'bad credit risk' in label_sentence_lower:
             return 0  # 0 = bad credit risk
-        # Also check for numeric patterns like "decision is 1" or "decision is 0"
-        match = re.search(r'decision\s+is\s+(\d+)', label_sentence_lower)
-        if match:
-            return int(match.group(1))
-    elif dataset_name == 'adult':
-        # Check for "above 50K" or "below 50K"
-        if 'above 50k' in label_sentence_lower or 'above 50 k' in label_sentence_lower:
-            return 1
-        elif 'below 50k' in label_sentence_lower or 'below 50 k' in label_sentence_lower:
-            return 0
         # Also check for numeric patterns
-        match = re.search(r'classification.*?is\s+(\d+)', label_sentence_lower)
+        match = re.search(r'(?:decision|is)\s+(\d+)', label_sentence_lower)
         if match:
             return int(match.group(1))
     
+    elif dataset_name == 'adult':
+        # Format: "The income classification is [<=50K/>50K]."
+        if '>50k' in label_sentence_lower or '> 50k' in label_sentence_lower:
+            return 1
+        elif '<=50k' in label_sentence_lower or '<= 50k' in label_sentence_lower:
+            return 0
+        # Also check for numeric patterns
+        match = re.search(r'classification\s+is\s+(\d+)', label_sentence_lower)
+        if match:
+            return int(match.group(1))
+    
+    elif dataset_name == 'bank-marketing':
+        # Format: "The subscription decision is [subscribed/not subscribed]."
+        if 'not subscribed' in label_sentence_lower:
+            return 0  # not subscribed
+        elif 'subscribed' in label_sentence_lower:
+            return 1  # subscribed
+        # Also check yes/no patterns
+        if ' yes' in label_sentence_lower:
+            return 1
+        elif ' no' in label_sentence_lower:
+            return 0
+    
+    elif dataset_name == 'credit-scoring':
+        # Format: "The credit application decision is [approved/rejected]."
+        if 'approved' in label_sentence_lower:
+            return 0  # 0 = approved (good)
+        elif 'rejected' in label_sentence_lower:
+            return 1  # 1 = rejected (bad)
+        # Also check numeric
+        match = re.search(r'decision\s+is\s+(\d+)', label_sentence_lower)
+        if match:
+            return int(match.group(1))
+    
+    elif dataset_name == 'dutch-census':
+        # Format: "The occupation classification is [low-level/high-level]."
+        if 'high-level' in label_sentence_lower or 'high level' in label_sentence_lower:
+            return 1  # 1 = high-level
+        elif 'low-level' in label_sentence_lower or 'low level' in label_sentence_lower:
+            return 0  # 0 = low-level
+        # Also check numeric
+        match = re.search(r'classification\s+is\s+(\d+)', label_sentence_lower)
+        if match:
+            return int(match.group(1))
+    
+    # Generic fallback: try to find any number after "is"
+    match = re.search(r'is\s+(\d+)', label_sentence_lower)
+    if match:
+        return int(match.group(1))
+    
+
     return None
 
 
@@ -349,16 +389,34 @@ def remove_label_description_from_sentence(sentence: str, dataset_name: str) -> 
     if dataset_name == 'german-credit-data':
         # Remove patterns like "The credit application has been evaluated and the decision is ..."
         # Remove everything from "The credit application" onwards
-        pattern = r'\s*The credit application has been evaluated and the decision is.*$'
+        pattern = r'\s*The credit (?:application has been evaluated and the decision|risk classification) is.*$'
         sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
         # Also remove if it's just "good credit risk" or "bad credit risk" at the end
         sentence = re.sub(r'\s*(good|bad)\s+credit\s+risk\.?\s*$', '', sentence, flags=re.IGNORECASE)
+    
     elif dataset_name == 'adult':
         # Remove patterns like "The income classification for this person is ..."
-        pattern = r'\s*The income classification for this person is.*$'
+        pattern = r'\s*The income classification.*$'
         sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
         # Also remove "above 50K" or "below 50K" at the end
-        sentence = re.sub(r'\s*(above|below)\s+50K\.?\s*$', '', sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r'\s*(above|below|income\s*[<>=]+)\s*50K\.?\s*$', '', sentence, flags=re.IGNORECASE)
+    
+    elif dataset_name == 'bank-marketing':
+        # Remove patterns like "The subscription decision is ..."
+        pattern = r'\s*The subscription decision is.*$'
+        sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r'\s*(subscribed|not\s+subscribed)\.?\s*$', '', sentence, flags=re.IGNORECASE)
+    
+    elif dataset_name == 'credit-scoring':
+        # Remove patterns like "The credit decision is ..."
+        pattern = r'\s*The credit decision is.*$'
+        sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r'\s*(approved|rejected)\.?\s*$', '', sentence, flags=re.IGNORECASE)
+    
+    elif dataset_name == 'dutch-census':
+        # Remove patterns like "The occupation classification is ..."
+        pattern = r'\s*The occupation classification is.*$'
+        sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
     
     # Clean up trailing spaces and punctuation
     sentence = sentence.strip()
@@ -366,7 +424,7 @@ def remove_label_description_from_sentence(sentence: str, dataset_name: str) -> 
     # Remove trailing period if it's the last character (but keep if sentence ends naturally)
     if sentence.endswith('.'):
         # Only remove if it's likely from label removal
-        if not any(word in sentence.lower() for word in ['status', 'months', 'years', 'credits', 'dependents']):
+        if not any(word in sentence.lower() for word in ['status', 'months', 'years', 'credits', 'dependents', 'activity']):
             sentence = sentence[:-1].strip()
     
     return sentence
@@ -378,7 +436,7 @@ def add_label_description_to_sentence(sentence: str, label: int, dataset_name: s
     
     Args:
         sentence: Original sentence without label
-        label: Label value (0 or 1)
+        label: Label value (0 or 1, or occupation code for dutch-census)
         dataset_name: Name of dataset
     
     Returns:
@@ -389,13 +447,33 @@ def add_label_description_to_sentence(sentence: str, label: int, dataset_name: s
             label_desc = "good credit risk"
         else:
             label_desc = "bad credit risk"
-        return f"{sentence} The credit application has been evaluated and the decision is {label_desc}."
+        return f"{sentence} The credit risk classification is {label_desc}."
+    
     elif dataset_name == 'adult':
         if label == 1:
-            label_desc = "above 50K"
+            label_desc = "income >50K"
         else:
-            label_desc = "below 50K"
-        return f"{sentence} The income classification for this person is {label_desc}."
+            label_desc = "income <=50K"
+        return f"{sentence} The income classification is {label_desc}."
+    
+    elif dataset_name == 'bank-marketing':
+        if label == 1:
+            label_desc = "subscribed"
+        else:
+            label_desc = "not subscribed"
+        return f"{sentence} The subscription decision is {label_desc}."
+    
+    elif dataset_name == 'credit-scoring':
+        if label == 0:
+            label_desc = "approved"
+        else:
+            label_desc = "rejected"
+        return f"{sentence} The credit decision is {label_desc}."
+    
+    elif dataset_name == 'dutch-census':
+        # Dutch census uses occupation code as label
+        return f"{sentence} The occupation classification is {label}."
+    
     else:
         # Default format
         return f"{sentence} Label: {label}."
