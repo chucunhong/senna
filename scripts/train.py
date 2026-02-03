@@ -25,8 +25,16 @@ Key Objectives:
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
-from data_loader import load_dataset  # Main function - use this for all datasets
-from visualization import (
+import os
+import sys
+import numpy as np
+import argparse
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.data_loader import load_dataset  # Main function - use this for all datasets
+from src.visualization import (
     visualize_reconstruction_and_attention, 
     visualize_batch_analysis, 
     visualize_attention_heatmap_batch, 
@@ -35,9 +43,6 @@ from visualization import (
     visualize_attention_on_text,
     visualize_attention_comparison
 )
-import os
-import numpy as np
-import argparse
 
 # Import from components module
 from components import (

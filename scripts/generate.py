@@ -17,12 +17,17 @@ import argparse
 import pandas as pd
 import json
 import os
+import sys
 import numpy as np
 import threading
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import concurrent.futures
-from prompts import prompts
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.prompts import prompts
 
 class FairnessGovernor:
     """
@@ -1086,8 +1091,10 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
             if rate_match:
                 extracted_fields['installment-rate'] = int(rate_match.group(1))
             
-            # Extract other debtors - pattern: "other debtors {other_debtors}."
-            debtors_match = re.search(r'other debtors\s+([^,]+?)(?:\.|,|Current)', sentence, re.IGNORECASE)
+            # Extract other debtors - pattern: "... and {other_debtors} other debtors."
+            # Note: Prompt produces "... and none other debtors." (Value then Key)
+            # The "and" is optional in some contexts or variations, so we handle it.
+            debtors_match = re.search(r',\s*(?:and\s+)?([^,]+?)\s+other debtors', sentence, re.IGNORECASE)
             if debtors_match:
                 debtors_val = debtors_match.group(1).strip().lower()
                 # Normalize: "no" -> "none"
@@ -1106,8 +1113,9 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
             if property_match:
                 extracted_fields['property'] = property_match.group(1).strip()
             
-            # Extract other installment - pattern: "other installment plans {other_installment},"
-            other_installment_match = re.search(r'other installment plans\s+([^,]+?)(?:,|\.|housing)', sentence, re.IGNORECASE)
+            # Extract other installment - pattern: "... {other_installment} other installment plans,"
+            # Note: Prompt produces "... none other installment plans," (Value then Key)
+            other_installment_match = re.search(r',\s+([^,]+?)\s+other installment plans', sentence, re.IGNORECASE)
             if other_installment_match:
                 other_inst_val = other_installment_match.group(1).strip().lower()
                 # Normalize: "no" -> "none"

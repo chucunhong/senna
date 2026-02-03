@@ -39,17 +39,18 @@ import json
 from datetime import datetime
 import sys
 
-# Add parent directory to path to import embed_data functions
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 try:
-    from embed_data import load_model, embed_data
+    from scripts.embed import load_model, embed_data
     EMBED_AVAILABLE = True
 except ImportError:
     EMBED_AVAILABLE = False
-    print("⚠ Warning: Cannot import embed_data. Will only work with pre-computed embeddings.")
+    print("⚠ Warning: Cannot import embed. Will only work with pre-computed embeddings.")
 
 try:
-    from data_loader import load_german_credit_data_balanced, load_dataset_generic
+    from src.data_loader import load_german_credit_data_balanced, load_dataset_generic
     DATA_LOADER_AVAILABLE = True
 except ImportError:
     DATA_LOADER_AVAILABLE = False

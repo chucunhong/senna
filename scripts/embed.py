@@ -14,9 +14,16 @@ import numpy as np
 import pandas as pd
 import argparse
 import os
-from data_loader import load_dataset_generic
-from main_attention import CD_Model, TextDataset, compute_and_cache_tokenized_data
+import sys
 from torch.utils.data import DataLoader
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.data_loader import load_dataset_generic
+from components.models import CD_Model
+from components.dataset import TextDataset
+from components.tokenization import compute_and_cache_tokenized_data
 
 # Auto-detect device (use standard utility function)
 from components.utils import get_device

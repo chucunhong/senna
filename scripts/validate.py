@@ -12,6 +12,7 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional
 from transformers import AutoTokenizer
 import os
+import sys
 import glob
 import hashlib
 import pickle
@@ -20,9 +21,12 @@ from sklearn.decomposition import PCA
 import re
 import pandas as pd
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from components.models import CD_Model, device
 from components.dataset import TextDataset
-from data_loader import load_german_credit_data_balanced, load_dataset_generic, load_dataset
+from src.data_loader import load_german_credit_data_balanced, load_dataset_generic, load_dataset
 from components.tokenization import compute_and_cache_tokenized_data
 
 def flip_sensitive_attribute(sentence: str, attr_name: str, dataset_name: str) -> str:

@@ -10,33 +10,26 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
-from data_loader import load_german_credit_data_balanced, load_dataset_generic
 import numpy as np
 import argparse
 import json
 import os
+import sys
 from datetime import datetime
 from itertools import product
 import random
-# Import from main_attention
-try:
-    from main_attention import (
-        TextDataset, CD_Model, 
-        compute_kl_loss,
-        compute_reconstruction_loss, compute_orthogonality_penalty,
-        compute_and_cache_bert_embeddings,
-        device
-    )
-except ImportError:
-    # Fallback: import directly
-    import main_attention
-    TextDataset = main_attention.TextDataset
-    CD_Model = main_attention.CD_Model
-    compute_kl_loss = main_attention.compute_kl_loss
-    compute_reconstruction_loss = main_attention.compute_reconstruction_loss
-    compute_orthogonality_penalty = main_attention.compute_orthogonality_penalty
-    compute_and_cache_bert_embeddings = main_attention.compute_and_cache_bert_embeddings
-    device = main_attention.device
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.data_loader import load_german_credit_data_balanced, load_dataset_generic
+from components.models import CD_Model
+from components.dataset import TextDataset
+from components.losses import compute_kl_loss, compute_reconstruction_loss, compute_orthogonality_penalty, compute_random_guess_penalty
+from components.tokenization import compute_and_cache_bert_embeddings
+from components.utils import get_device
+
+device = get_device()
 
 def train_and_evaluate(sentences, labels, 
                        lambda_adv=5.0, lambda_rec=0.5, lambda_ortho=0.5,
@@ -133,11 +126,10 @@ def train_and_evaluate(sentences, labels,
             optimizer.zero_grad()
             output = model(input_ids, attention_mask, bert_embeddings=bert_embeddings)
             
-            # Compute losses (matching main_attention.py)
+            # Compute losses
             loss_task = nn.functional.cross_entropy(output['logits_y_from_z_d'], labels_batch)
             
             # Adversarial loss with penalty
-            from main_attention import compute_random_guess_penalty
             loss_adv_ce = nn.functional.cross_entropy(output['logits_y_from_z_c'], labels_batch)
             loss_adv_penalty = compute_random_guess_penalty(output['logits_y_from_z_c'], target=0.5)
             loss_adv = loss_adv_ce + loss_adv_penalty

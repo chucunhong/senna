@@ -46,7 +46,7 @@ def format_sentence_for_bert(text, remove_stop_words=False, normalize_spacing=Tr
 
 
 
-def load_sentence_template(dataset_name, template_file="sentence_templates.json"):
+def load_sentence_template(dataset_name, template_file="src/sentence_templates.json"):
     """
     Load sentence template from JSON file.
     

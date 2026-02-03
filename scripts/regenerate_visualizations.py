@@ -14,13 +14,20 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 import os
+import sys
 import glob
 import argparse
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Import components
-from components import CD_Model, TextDataset, compute_and_cache_tokenized_data, device
-from data_loader import load_dataset
-from visualization import (
+from components.models import CD_Model
+from components.dataset import TextDataset
+from components.tokenization import compute_and_cache_tokenized_data
+from components.utils import get_device
+from src.data_loader import load_dataset
+from src.visualization import (
     visualize_reconstruction_and_attention,
     visualize_batch_analysis,
     visualize_attention_heatmap_batch,
@@ -29,6 +36,8 @@ from visualization import (
     visualize_attention_on_text,
     visualize_attention_comparison
 )
+
+device = get_device()
 
 print(f"Using device: {device}")
 
