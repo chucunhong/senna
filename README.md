@@ -12,7 +12,7 @@ SENNA tackles the challenge of generating fair synthetic data for tabular datase
 4. **Data validation for multiple fairness** - Including individual fairness and group fairness
 5. **Deconvert back to tabular format** - Validate and convert generated text back to structured data
 
-![SENNA Architecture](SENNA.pdf)
+[View SENNA Architecture (PDF)](SENNA.pdf)
 
 ## 🏗️ Architecture
 
