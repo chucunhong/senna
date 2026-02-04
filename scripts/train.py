@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Fairness learning with disentangled representations from Natural Language (LIRD framework).
+Fairness learning with disentangled representations from Natural Language (SENNA framework).
 
 Architecture:
 1. Shared BERT encoder + 2 separate heads (Content head & Demographic head)
 2. Attention pooling in heads to extract z_c and z_d from shared BERT output
 3. Separate decoders: D_c(z_c) and D_d(z_d) for additive reconstruction
 
-LIRD Objectives (HSIC-based, no adversarial training):
+SENNA Objectives (Adversarial + HSIC-based):
 - L_task: z_c → y (high accuracy) - z_c contains task-relevant info
-- L_y: HSIC(z_d, y) (minimize) - z_d is independent of task label y
+- L_adv: Adversarial training via GRL - z_d is independent of task label y
 - L_ind: HSIC(z_c, z_d) (minimize) - z_c and z_d are statistically independent
 - L_rec: ||D_c(z_c) + D_d(z_d) - h||² (minimize) - additive reconstruction
-- L_var: Variance/energy constraint on z_d to prevent collapse to noise
 
 Key Objectives:
 - z_c (Task-Relevant Space): Can predict y well (high accuracy)
@@ -106,7 +105,7 @@ if __name__ == "__main__":
         "--lambda-adv",
         type=float,
         default=1.0,
-        help="HSIC(z_d, y) weight for label-independence (default: 1.0, LIRD framework)"
+        help="Adversarial weight for label-independence (default: 1.0, SENNA framework)"
     )
     parser.add_argument(
         "--lambda-rec",
@@ -125,12 +124,6 @@ if __name__ == "__main__":
         type=float,
         default=0.01,
         help="VAE KL loss weight for z_c and z_d to N(0,I) prior (default: 0.01, reduced from 1.0 to prevent information loss)"
-    )
-    parser.add_argument(
-        "--lambda-var",
-        type=float,
-        default=0.1,
-        help="Variance/energy constraint weight for z_d (prevents collapse, default: 0.1)"
     )
     parser.add_argument(
         "--latent-dim",
@@ -209,7 +202,7 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             if gpu_memory_gb >= 30:  # RTX 5090, A100, etc. (30GB+)
-                args.batch_size = 250
+                args.batch_size = 200
             elif gpu_memory_gb >= 20:  # RTX 4090, etc. (20-30GB)
                 args.batch_size = 64
             elif gpu_memory_gb >= 10:  # RTX 3080, etc. (10-20GB)
@@ -230,7 +223,6 @@ if __name__ == "__main__":
         lambda_rec=args.lambda_rec,
         lambda_ortho=args.lambda_ortho,
         lambda_kl=args.lambda_kl,
-        lambda_var=args.lambda_var,
         latent_dim=args.latent_dim,
         lr=args.lr,
         use_cache=use_cache,

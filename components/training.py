@@ -15,16 +15,14 @@ from .dataset import TextDataset
 from .losses import (
     compute_kl_loss, 
     compute_reconstruction_loss, 
-    compute_hsic,
-    compute_variance_constraint,
-    compute_energy_constraint
+    compute_hsic
 )
 from .tokenization import compute_and_cache_tokenized_data
 
 
-def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1.0, lambda_adv=0.1, lambda_rec=0.5, lambda_ortho=1.0, lambda_kl=0.1, lambda_var=0.1, latent_dim=32, lr=2e-5, use_cache=True, dataset_name="default", force_recompute_cache=False, use_amp=False):
+def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1.0, lambda_adv=0.1, lambda_rec=0.5, lambda_ortho=1.0, lambda_kl=0.1, latent_dim=32, lr=2e-5, use_cache=True, dataset_name="default", force_recompute_cache=False, use_amp=False):
     """
-    Train the model to learn disentangled representations from Natural Language (LIRD framework).
+    Train the model to learn disentangled representations from Natural Language (SENNA framework).
     
     Architecture:
     - 1 shared BERT encoder (bert-base-uncased)
@@ -45,7 +43,6 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
             - Smooth latent space (good interpolation)
             - Proper sampling (can sample z ~ N(0,I) and decode to generate data)
             - Normalized distribution (prevents sampling outside manifold)
-    + L_var: Variance/energy constraint on z_d to prevent collapse to noise
     
     NOTE: VAE is used for compression (768 → latent_dim) AND generation.
     NOTE: Uses Adversarial training with GRL for z_d independence (more intuitive than HSIC).
@@ -55,14 +52,13 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
     print(f"{'='*70}")
     print(f"Epochs: {num_epochs}, Batch size: {batch_size}, LR: {lr}")
     print(f"Latent dim: {latent_dim}")
-    print(f"\nTRAINING OBJECTIVES (Adversarial + HSIC):")
+    print(f"\nTRAINING OBJECTIVES (SENNA - Adversarial + HSIC):")
     print(f"  1. λ_task={lambda_task} : z_c → y (target: high accuracy ~1.0)")
     print(f"  2. λ_adv={lambda_adv} : Adversarial(z_d, y) via GRL (target: Acc ~0.5, random)")
     print(f"  3. λ_ortho={lambda_ortho} : HSIC(z_c, z_d) (target: ~0, disentangle)")
     print(f"  4. λ_rec={lambda_rec} : ||D_c(z_c) + D_d(z_d) - h||² (target: ~0, reconstruction)")
     print(f"\n  + λ_kl={lambda_kl} : VAE KL regularization KL(q(z_c|x)||N(0,I)) + KL(q(z_d|x)||N(0,I))")
     print(f"    → Ensures smooth latent space and proper sampling for generation")
-    print(f"  + λ_var={lambda_var} : Variance/energy constraint on z_d (prevent collapse)")
     print(f"{'='*70}\n")
     
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
@@ -209,7 +205,6 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
         'epoch': [], 'loss_enc': [], 
         'loss_task': [], 'loss_adv': [], 'loss_ortho': [], 'loss_rec': [],  # 4 main losses
         'loss_kl': [],  # VAE regularization (compression only)
-        'loss_var': [],  # Variance/energy constraint to prevent z_d collapse
         'acc_task_from_z_d': [], 'acc_task_from_z_c': [],
         'per_class_acc_z_d': [], 'per_class_acc_z_c': []
     }
@@ -231,7 +226,6 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
         model.train()
         loss_enc_total = loss_task_total = loss_adv_total = loss_ortho_total = loss_rec_total = 0
         loss_kl_total = 0
-        loss_var_total = 0
         correct_task_from_z_d = correct_task_from_z_c = total = 0
         
         for batch_idx, batch in enumerate(dataloader):
@@ -301,11 +295,7 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                 loss_kl_d = compute_kl_loss(output['mu_d'], output['logvar_d'])  # KL(q(z_d|x) || N(0,I))
                 loss_kl = loss_kl_c + loss_kl_d
                 
-                # + L_var: Variance/energy constraint to prevent z_d collapse
-                # Encourage z_d to have sufficient variance and D_d(z_d) to have sufficient energy
-                loss_var_z = compute_variance_constraint(output['z_d'], min_variance=0.1)
-                loss_var_d = compute_energy_constraint(output['reconstructed_d'], min_energy=0.1)
-                loss_var = loss_var_z + loss_var_d
+
                 
                 # ============ TRAIN CLASSIFIER SEPARATELY (MULTIPLE STEPS) ============
                 # Train classifier multiple times per batch to learn faster
@@ -337,21 +327,19 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                     weight=class_weights
                 )
                 
-                # ============ COMBINED ENCODER LOSS (Adversarial + HSIC) ============
+                # ============ COMBINED ENCODER LOSS (SENNA - Adversarial + HSIC) ============
                 # 1. L_task: z_c → y (MINIMIZE → Acc ~1.0) - sufficiency
                 # 2. L_rec: D_c(z_c) + D_d(z_d) → h (MINIMIZE → 0) - reconstruction
                 # 3. L_ortho: HSIC(z_c, z_d) (MINIMIZE → 0) - disentangle
                 # 4. L_adv: Adversarial loss via GRL (confuse classifier → Acc ~0.5)
                 # + L_kl: VAE KL regularization to N(0,I) (smooth latent space + generation)
-                # + L_var: Variance/energy constraint to prevent z_d collapse
                 
                 loss_enc = (
                     lambda_task * loss_task_updated +    # 1. L_task: sufficiency
                     lambda_rec * loss_rec +              # 2. L_rec: additive reconstruction
                     lambda_ortho * loss_ind +            # 3. L_ortho: HSIC(z_c, z_d) - disentangle
                     lambda_adv * loss_y +                # 4. L_adv: Adversarial via GRL - label-independence
-                    lambda_kl * loss_kl +                # VAE regularization
-                    lambda_var * loss_var                # Variance/energy constraint (prevent collapse)
+                    lambda_kl * loss_kl                  # VAE regularization
                 )
                 
                 # Train BERT_c, BERT_d and decoder with full loss (using AMP if enabled)
@@ -366,13 +354,12 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                 # Accumulate losses for monitoring:
                 # - loss_enc: Combined loss (used for training)
                 # - Individual losses: Track each component separately for debugging
-                loss_enc_total += loss_enc.item()              # Combined: λ_task*L_task + λ_rec*L_rec + λ_ortho*HSIC(z_c,z_d) + λ_adv*L_adv + λ_kl*L_kl + λ_var*L_var
+                loss_enc_total += loss_enc.item()              # Combined: λ_task*L_task + λ_rec*L_rec + λ_ortho*HSIC(z_c,z_d) + λ_adv*L_adv + λ_kl*L_kl
                 loss_task_total += loss_task_updated.item()    # 1. L_task: z_c → y (sufficiency)
                 loss_adv_total += loss_y.item()                # 2. L_adv: Adversarial via GRL (label-independence)
                 loss_ortho_total += loss_ind.item()            # 3. L_ortho: HSIC(z_c, z_d) (disentangle)
                 loss_rec_total += loss_rec.item()              # 4. L_rec: D_c(z_c) + D_d(z_d) → h (additive reconstruction)
                 loss_kl_total += loss_kl.item()                # 5. L_kl: VAE regularization
-                loss_var_total += loss_var.item()              # 6. L_var: Variance/energy constraint (prevent collapse)
                 
                 with torch.no_grad():
                     # Compute accuracy from z_d using adversarial classifier (for monitoring)
@@ -434,7 +421,6 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
         history['loss_ortho'].append(loss_ortho_total / num_batches)
         history['loss_rec'].append(loss_rec_total / num_batches)
         history['loss_kl'].append(loss_kl_total / num_batches)
-        history['loss_var'].append(loss_var_total / num_batches)
         history['acc_task_from_z_d'].append(correct_task_from_z_d / total if total > 0 else 0)
         history['acc_task_from_z_c'].append(correct_task_from_z_c / total if total > 0 else 0)
         
@@ -458,7 +444,7 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
         # Update learning rate schedulers
         scheduler.step(avg_loss_enc)
         scheduler_classifier.step(history['loss_task'][-1])  # Use task loss for classifier scheduler
-        # scheduler_adv not used in LIRD (no adversarial training)
+        # scheduler_adv not used in SENNA (no adversarial training)
         # scheduler_adv.step(history['loss_adv'][-1])
         current_lr = optimizer.param_groups[0]['lr']
         classifier_lr = optimizer_classifier.param_groups[0]['lr']
@@ -472,18 +458,17 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
         per_class_acc_z_d_str = f"PerCls: {history['per_class_acc_z_d'][-1]:.3f}" if len(history['per_class_acc_z_d']) > 0 else ""
         per_class_acc_z_c_str = f"PerCls: {history['per_class_acc_z_c'][-1]:.3f}" if len(history['per_class_acc_z_c']) > 0 else ""
         
-        # Print detailed epoch info (LIRD losses)
+        # Print detailed epoch info (SENNA losses)
         print(f"\nEpoch {epoch:3d}/{num_epochs}")
-        print(f"  LIRD Losses: L_task={history['loss_task'][-1]:.4f} | L_y={history['loss_adv'][-1]:.4f} | L_ind={history['loss_ortho'][-1]:.4f} | L_rec={history['loss_rec'][-1]:.4f}")
-        print(f"  Regularization: L_kl={history['loss_kl'][-1]:.4f} | L_var={history['loss_var'][-1]:.4f} | Total L_enc={avg_loss_enc:.4f}")
+        print(f"  SENNA Losses: L_task={history['loss_task'][-1]:.4f} | L_adv={history['loss_adv'][-1]:.4f} | L_ind={history['loss_ortho'][-1]:.4f} | L_rec={history['loss_rec'][-1]:.4f}")
+        print(f"  Regularization: L_kl={history['loss_kl'][-1]:.4f} | Total L_enc={avg_loss_enc:.4f}")
         # Show weighted contributions for debugging
         weighted_task = lambda_task * history['loss_task'][-1]
         weighted_adv = lambda_adv * history['loss_adv'][-1]
         weighted_ortho = lambda_ortho * history['loss_ortho'][-1]
         weighted_rec = lambda_rec * history['loss_rec'][-1]
         weighted_kl = lambda_kl * history['loss_kl'][-1]
-        weighted_var = lambda_var * history['loss_var'][-1]
-        print(f"  Weighted: λ_task*L_task={weighted_task:.4f} | λ_adv*L_y={weighted_adv:.4f} | λ_ortho*L_ind={weighted_ortho:.4f} | λ_rec*L_rec={weighted_rec:.4f} | λ_kl*L_kl={weighted_kl:.4f} | λ_var*L_var={weighted_var:.4f}")
+        print(f"  Weighted: λ_task*L_task={weighted_task:.4f} | λ_adv*L_adv={weighted_adv:.4f} | λ_ortho*L_ind={weighted_ortho:.4f} | λ_rec*L_rec={weighted_rec:.4f} | λ_kl*L_kl={weighted_kl:.4f}")
         print(f"  Accuracy: Acc(z_c→y)={history['acc_task_from_z_c'][-1]:.3f} {per_class_acc_z_c_str} (→1.0)")
         print(f"            Acc(z_d→y)={history['acc_task_from_z_d'][-1]:.3f} {per_class_acc_z_d_str} {random_target_str}")
         print(f"  LR: encoder={current_lr:.6f}, classifier={classifier_lr:.6f}")
@@ -513,14 +498,13 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
     per_class_acc_z_d_final = history['per_class_acc_z_d'][-1] if len(history['per_class_acc_z_d']) > 0 else 0.0
     per_class_acc_z_c_final = history['per_class_acc_z_c'][-1] if len(history['per_class_acc_z_c']) > 0 else 0.0
     
-    print(f"\nTRAINING OBJECTIVES (Adversarial + HSIC) - Final Results:")
+    print(f"\nTRAINING OBJECTIVES (SENNA - Adversarial + HSIC) - Final Results:")
     print(f"  1. L_task (z_c → y): Acc={history['acc_task_from_z_c'][-1]:.3f} (target: ~1.0) - sufficiency")
     print(f"  2. L_adv (Adversarial): Loss={history['loss_adv'][-1]:.4f} - label-independence via GRL")
     print(f"     Acc(z_d → y): {history['acc_task_from_z_d'][-1]:.3f} (target: {random_target_str}) - should be random!")
     print(f"  3. L_ortho (HSIC(z_c, z_d)): {history['loss_ortho'][-1]:.4f} (target: ~0) - disentangle")
     print(f"  4. L_rec (reconstruction): {history['loss_rec'][-1]:.4f} (target: ~0) - additive reconstruction")
     print(f"\n  + L_kl (VAE KL to N(0,I)): {history['loss_kl'][-1]:.4f} (smooth latent space + generation)")
-    print(f"  + L_var (variance/energy constraint): {history['loss_var'][-1]:.4f} (prevent z_d collapse)")
     print(f"\nNOTE: Per-class accuracy is w.r.t. task labels (y), NOT sensitive attributes")
     print(f"{'='*70}")
     

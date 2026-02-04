@@ -59,7 +59,7 @@ Shared BERT Output [batch_size, seq_len, 768]
 ```
 SENNA/
 ├── scripts/                      # Main scripts
-│   ├── train.py                  # Train LIRD model with BERT encoder
+│   ├── train.py                  # Train SENNA model with BERT encoder
 │   ├── generate.py               # Generate synthetic data with Gemini API
 │   ├── cluster.py                # K-means clustering on z_d embeddings
 │   ├── validate.py               # Validate synthetic data with k-NN on z_c

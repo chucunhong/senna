@@ -375,7 +375,7 @@ class CD_Model(nn.Module):
     
     def forward(self, input_ids, attention_mask, bert_embeddings=None):
         """
-        Forward pass with shared BERT encoder + 2 separate heads (LIRD framework).
+        Forward pass with shared BERT encoder + 2 separate heads (SENNA framework).
         
         Uses HSIC for independence constraints (no GRL/adversarial training).
         
