@@ -387,64 +387,13 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
         else:
             print(f"⚠ Filtered ICL: 0 samples matching {filter_dict}. Falling back to balanced sampling.")
 
-    # NEW: Balanced ICL Sampling for Fairness (Jointly balance Label + Sensitive Attributes)
-    # We prioritize joint balancing unless a very specific filter was requested that worked
+    # Simple shuffle only - no rebalancing needed since:
+    # 1. If using clustered data: clustering already samples diverse representatives from z_d
+    # 2. Rebalancing by sensitive attrs can unnecessarily reduce ICL examples
     if shuffle:
-        label_col = 'label' if 'label' in df.columns else ('class-label' if 'class-label' in df.columns else None)
-        
-        if label_col:
-            # We want to balance by (Label, SensitiveAttr1, ...)
-            # If sensitive_attrs is provided, use them. Otherwise just balance by label.
-            balance_cols = [label_col]
-            if sensitive_attrs:
-                for attr in sensitive_attrs:
-                    if attr in df.columns:
-                        balance_cols.append(attr)
-            
-            # If we have multiple balance columns, attempt joint balancing
-            if len(balance_cols) > 1:
-                print(f"Sampling balanced ICL examples (balanced across: {balance_cols})...")
-                
-                # Create group-based sampling
-                groups = df.groupby(balance_cols)
-                min_group_size = groups.size().min()
-                
-                if min_group_size > 0:
-                    # Sample min_group_size from each group
-                    sampled_entries = []
-                    for _, group_df in groups:
-                        sampled_entries.append(group_df.sample(n=min_group_size, random_state=random_state))
-                    
-                    df = pd.concat(sampled_entries).sample(frac=1, random_state=random_state)
-                    print(f"✓ Jointly Balanced ICL: {len(df)} samples ({min_group_size} per intersection group)")
-                else:
-                    # Fallback to simple label balancing if joint is too sparse or filter was applied
-                    print(f"⚠ Could not jointly balance ICL (some groups empty). Falling back to simple label balancing.")
-                    df_0 = df[df[label_col].astype(str).isin(['0', '0.0', 'bad credit risk', 'income <=50K'])]
-                    df_1 = df[df[label_col].astype(str).isin(['1', '1.0', 'good credit risk', 'income >50K'])]
-                    min_size = min(len(df_0), len(df_1))
-                    if min_size > 0:
-                        df_0_s = df_0.sample(n=min_size, random_state=random_state)
-                        df_1_s = df_1.sample(n=min_size, random_state=random_state)
-                        df = pd.concat([df_0_s, df_1_s]).sample(frac=1, random_state=random_state)
-                    else:
-                        df = df.sample(frac=1, random_state=random_state)
-            else:
-                # Simple label balancing if no sensitive attributes
-                df_0 = df[df[label_col].astype(str).isin(['0', '0.0', 'bad credit risk', 'income <=50K'])]
-                df_1 = df[df[label_col].astype(str).isin(['1', '1.0', 'good credit risk', 'income >50K'])]
-                min_size = min(len(df_0), len(df_1))
-                if min_size > 0:
-                    df_0_s = df_0.sample(n=min_size, random_state=random_state)
-                    df_1_s = df_1.sample(n=min_size, random_state=random_state)
-                    df = pd.concat([df_0_s, df_1_s]).sample(frac=1, random_state=random_state)
-                    print(f"✓ Balanced ICL by Label: {len(df)} samples ({min_size} per label)")
-                else:
-                    df = df.sample(frac=1, random_state=random_state)
-        else:
-            print(f"Shuffling data with random_state={random_state}...")
-            df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
-            print(f"✓ Data shuffled")
+        print(f"Shuffling ICL data with random_state={random_state}...")
+        df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+        print(f"✓ Shuffled {len(df)} ICL examples")
     
     # NEW: Print ICL distribution
     label_col = 'label' if 'label' in df.columns else ('class-label' if 'class-label' in df.columns else None)

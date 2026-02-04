@@ -1207,7 +1207,7 @@ def visualize_synthetic_data_pca(
     
     ax.set_xlabel(f'PC1 ({pca_c.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_c.explained_variance_ratio_[1]:.2%})', fontsize=12)
-    title = f'z_c (Content) - PCA 2D Projection'
+    title = f'Task-Relevant (z_c) - PCA 2D Projection'
     if compare_with_original:
         title += f' (Synthetic vs Original)\n{len(z_c_synthetic)} synthetic samples shown'
     else:
@@ -1239,7 +1239,7 @@ def visualize_synthetic_data_pca(
 
     ax.set_xlabel(f'PC1 ({pca_d.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_d.explained_variance_ratio_[1]:.2%})', fontsize=12)
-    title = f'z_d (Demographic) - PCA 2D Projection'
+    title = f'Non-Task Relevant (z_d) - PCA 2D Projection'
     if compare_with_original:
         title += f' (Synthetic vs Original)\n{len(z_d_synthetic)} synthetic samples shown'
     else:

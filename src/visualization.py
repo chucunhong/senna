@@ -242,7 +242,7 @@ def visualize_reconstruction_and_attention(
         cbar=True, vmin=0, vmax=max_attn_c,
         annot_kws={'size': 8}
     )
-    ax.set_title(f'z_c (Content) Attention (Max: {max_attn_c:.3f})', fontsize=13, fontweight='bold')
+    ax.set_title(f'Task-Relevant (z_c) Attention (Max: {max_attn_c:.3f})', fontsize=13, fontweight='bold')
     ax.set_xlabel('Tokens', fontsize=11)
     ax.tick_params(axis='x', rotation=45, labelsize=8)
     
@@ -257,7 +257,7 @@ def visualize_reconstruction_and_attention(
         cbar=True, vmin=0, vmax=max_attn_d,
         annot_kws={'size': 8}
     )
-    ax.set_title(f'z_d (Demographic) Attention (Max: {max_attn_d:.3f})', fontsize=13, fontweight='bold')
+    ax.set_title(f'Non-Task Relevant (z_d) Attention (Max: {max_attn_d:.3f})', fontsize=13, fontweight='bold')
     ax.set_xlabel('Tokens', fontsize=11)
     ax.tick_params(axis='x', rotation=45, labelsize=8)
     ax.set_xlabel('Tokens (Filtered for Meaning)', fontsize=11)
@@ -284,8 +284,8 @@ def visualize_reconstruction_and_attention(
     ✓ MSE Loss: {mse_recon:.4f} (lower = better)
     
     ATTENTION ANALYSIS:
-    z_c (Content) focuses on: {top_c_token} (weight: {np.max(attn_c_vals):.3f})
-    z_d (Demographic) focuses on: {top_d_token} (weight: {np.max(attn_d_vals):.3f})
+    Task-Relevant (z_c) focuses on: {top_c_token} (weight: {np.max(attn_c_vals):.3f})
+    Non-Task Relevant (z_d) focuses on: {top_d_token} (weight: {np.max(attn_d_vals):.3f})
     
     LATENT SPACE:
     z_c variance: {z_c.std().item():.4f}
@@ -313,7 +313,7 @@ def visualize_reconstruction_and_attention(
         ax=ax_c, cbar_kws={'label': 'Attention Weight'}, 
         cbar=True, vmin=0, vmax=max(attn_c_vals_filtered) if len(attn_c_vals_filtered) > 0 else 1
     )
-    ax_c.set_title(f'z_c (Content) Attention - Sentence: {sentence[:60]}...', 
+    ax_c.set_title(f'Task-Relevant (z_c) Attention - Sentence: {sentence[:60]}...', 
                    fontsize=12, fontweight='bold', pad=10)
     ax_c.set_xlabel('Tokens', fontsize=11)
     plt.tight_layout()
@@ -331,7 +331,7 @@ def visualize_reconstruction_and_attention(
         ax=ax_d, cbar_kws={'label': 'Attention Weight'}, 
         cbar=True, vmin=0, vmax=max(attn_d_vals_filtered) if len(attn_d_vals_filtered) > 0 else 1
     )
-    ax_d.set_title(f'z_d (Demographic) Attention - Sentence: {sentence[:60]}...', 
+    ax_d.set_title(f'Non-Task Relevant (z_d) Attention - Sentence: {sentence[:60]}...', 
                    fontsize=12, fontweight='bold', pad=10)
     ax_d.set_xlabel('Tokens', fontsize=11)
     plt.tight_layout()
@@ -652,7 +652,7 @@ def visualize_attention_heatmap_batch(model, dataloader, num_samples=50, save_di
                     annot=False,
                     cbar=True
                 )
-                ax_c.set_title('z_c (Content) Attention', fontsize=12, fontweight='bold', pad=8)
+                ax_c.set_title('Task-Relevant (z_c) Attention', fontsize=12, fontweight='bold', pad=8)
                 ax_c.set_xlabel('Tokens', fontsize=10)
                 plt.setp(ax_c.get_xticklabels(), rotation=45, ha='right', fontsize=9)
                 
@@ -669,7 +669,7 @@ def visualize_attention_heatmap_batch(model, dataloader, num_samples=50, save_di
                     annot=False,
                     cbar=True
                 )
-                ax_d.set_title('z_d (Demographic) Attention', fontsize=12, fontweight='bold', pad=8)
+                ax_d.set_title('Non-Task Relevant (z_d) Attention', fontsize=12, fontweight='bold', pad=8)
                 ax_d.set_xlabel('Tokens', fontsize=10)
                 plt.setp(ax_d.get_xticklabels(), rotation=45, ha='right', fontsize=9)
                 
@@ -764,7 +764,7 @@ def visualize_latent_space_pca(model, dataloader, num_samples=None, save_dir="vi
                             c='red', alpha=0.6, s=50, label='Label 1')
     ax.set_xlabel(f'PC1 ({pca_c.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_c.explained_variance_ratio_[1]:.2%})', fontsize=12)
-    ax.set_title('z_c (Content) - PCA 2D Projection', fontsize=13, fontweight='bold')
+    ax.set_title('Task-Relevant (z_c) - PCA 2D Projection', fontsize=13, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(alpha=0.3)
     
@@ -776,7 +776,7 @@ def visualize_latent_space_pca(model, dataloader, num_samples=None, save_dir="vi
                             c='red', alpha=0.6, s=50, label='Label 1')
     ax.set_xlabel(f'PC1 ({pca_d.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_d.explained_variance_ratio_[1]:.2%})', fontsize=12)
-    ax.set_title('z_d (Demographic) - PCA 2D Projection', fontsize=13, fontweight='bold')
+    ax.set_title('Non-Task Relevant (z_d) - PCA 2D Projection', fontsize=13, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(alpha=0.3)
     
@@ -826,9 +826,9 @@ def visualize_latent_space_pca(model, dataloader, num_samples=None, save_dir="vi
     print(f"        Separation ratio: {s_d:.4f}")
     
     if s_c > s_d:
-        print(f"  ✓ z_c (Content) has better class separation")
+        print(f"  ✓ Task-Relevant (z_c) has better class separation")
     else:
-        print(f"  ⚠️  z_d (Demographic) has better separation (should contain less task info)")
+        print(f"  ⚠️  Non-Task Relevant (z_d) has better separation (unexpected)")
     
     # IMPORTANT: Calculate actual predictive power using full-dimensional z_d
     # This explains why 50% accuracy doesn't mean no structure
@@ -967,7 +967,7 @@ def analyze_attention_difference(model, dataloader, num_samples=50, save_dir="vi
     # z_c
     ax = axes[0]
     sns.heatmap(attn_c_padded, cmap='YlOrRd', ax=ax, cbar_kws={'label': 'Attention Weight'})
-    ax.set_title(f'z_c (Content) Attention - {len(attn_c_list)} samples', 
+    ax.set_title(f'Task-Relevant (z_c) Attention - {len(attn_c_list)} samples', 
                  fontsize=13, fontweight='bold')
     ax.set_xlabel('Token Index')
     ax.set_ylabel('Sample')
@@ -975,7 +975,7 @@ def analyze_attention_difference(model, dataloader, num_samples=50, save_dir="vi
     # z_d
     ax = axes[1]
     sns.heatmap(attn_d_padded, cmap='RdPu', ax=ax, cbar_kws={'label': 'Attention Weight'})
-    ax.set_title(f'z_d (Demographic) Attention - {len(attn_d_list)} samples', 
+    ax.set_title(f'Non-Task Relevant (z_d) Attention - {len(attn_d_list)} samples', 
                  fontsize=13, fontweight='bold')
     ax.set_xlabel('Token Index')
     ax.set_ylabel('Sample')
@@ -1027,8 +1027,8 @@ def visualize_attention_on_text(model, dataloader, num_samples=20, save_dir="vis
     Creates HTML files showing which words z_c and z_d focus on.
     
     This helps understand:
-    - What information z_c (Content) captures from text
-    - What information z_d (Demographic) captures from text
+    - What information Task-Relevant (z_c) captures from text
+    - What information Non-Task Relevant (z_d) captures from text
     - Whether they focus on different parts of the text
     
     Args:
@@ -1070,17 +1070,17 @@ def visualize_attention_on_text(model, dataloader, num_samples=20, save_dir="vis
     </head>
     <body>
         <div class="container">
-            <h1>🔍 Attention Visualization: z_c (Content) vs z_d (Demographic)</h1>
+            <h1>🔍 Attention Visualization: Task-Relevant (z_c) vs Non-Task Relevant (z_d)</h1>
             
             <div class="legend">
                 <h3>Legend</h3>
                 <div class="legend-item">
                     <span class="legend-color" style="background: linear-gradient(to right, #fff3e0, #ff5722);"></span>
-                    z_c (Content) - Higher attention = more orange/red
+                    Task-Relevant (z_c) - Higher attention = more orange/red
                 </div>
                 <div class="legend-item">
                     <span class="legend-color" style="background: linear-gradient(to right, #f3e5f5, #9c27b0);"></span>
-                    z_d (Demographic) - Higher attention = more purple
+                    Non-Task Relevant (z_d) - Higher attention = more purple
                 </div>
             </div>
             
@@ -1167,12 +1167,12 @@ def visualize_attention_on_text(model, dataloader, num_samples=20, save_dir="vis
                 <div class="sample">
                     <div class="sample-header">Sample #{sample_count + 1} | Label: {label_str}</div>
                     <div class="attention-row z_c-row">
-                        <span class="label">z_c (Content):</span>
+                        <span class="label">Task-Relevant (z_c):</span>
                         <div class="text-container">{z_c_html}</div>
                         <div class="top-tokens">Top tokens: {', '.join(top_c_tokens)}</div>
                     </div>
                     <div class="attention-row z_d-row">
-                        <span class="label">z_d (Demographic):</span>
+                        <span class="label">Non-Task Relevant (z_d):</span>
                         <div class="text-container">{z_d_html}</div>
                         <div class="top-tokens">Top tokens: {', '.join(top_d_tokens)}</div>
                     </div>
@@ -1268,7 +1268,7 @@ def visualize_attention_comparison(model, dataloader, num_samples=10, save_dir="
                 ax.set_xticks(range(len(tokens_filtered)))
                 ax.set_xticklabels(tokens_filtered, rotation=45, ha='right', fontsize=9)
                 ax.set_ylabel('Attention Weight', fontsize=11)
-                ax.set_title(f'z_c (Content) Attention - Sample #{sample_count + 1}', fontsize=12, fontweight='bold')
+                ax.set_title(f'Task-Relevant (z_c) Attention - Sample #{sample_count + 1}', fontsize=12, fontweight='bold')
                 ax.set_ylim(0, max(attn_c_filtered) * 1.2 if len(attn_c_filtered) > 0 else 1)
                 
                 # Highlight top 3 tokens
@@ -1284,7 +1284,7 @@ def visualize_attention_comparison(model, dataloader, num_samples=10, save_dir="
                 ax.set_xticks(range(len(tokens_filtered)))
                 ax.set_xticklabels(tokens_filtered, rotation=45, ha='right', fontsize=9)
                 ax.set_ylabel('Attention Weight', fontsize=11)
-                ax.set_title(f'z_d (Demographic) Attention - Sample #{sample_count + 1}', fontsize=12, fontweight='bold')
+                ax.set_title(f'Non-Task Relevant (z_d) Attention - Sample #{sample_count + 1}', fontsize=12, fontweight='bold')
                 ax.set_ylim(0, max(attn_d_filtered) * 1.2 if len(attn_d_filtered) > 0 else 1)
                 
                 # Highlight top 3 tokens

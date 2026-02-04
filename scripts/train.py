@@ -15,8 +15,8 @@ LIRD Objectives (HSIC-based, no adversarial training):
 - L_var: Variance/energy constraint on z_d to prevent collapse to noise
 
 Key Objectives:
-- z_c (Content): Can predict y well (high accuracy)
-- z_d (Demographic): Cannot predict y (accuracy ~50/50, random guess), but carries input information
+- z_c (Task-Relevant Space): Can predict y well (high accuracy)
+- z_d (Non-Task Relevant Space): Cannot predict y (accuracy ~50/50, random guess), but carries input information
 - z_c ⊥ z_d: Statistically independent (HSIC ≈ 0)
 - D_c(z_c) + D_d(z_d) → h: Can reconstruct original representation
 - Attention visualization: See which tokens each head focuses on
