@@ -48,8 +48,7 @@ class GRL(nn.Module):
 # ============== CLASSIFIERS ==============
 class TaskClassifier(nn.Module):
     """
-    Enhanced classifier to predict y from z_c (task-relevant space).
-    z_c contains task-relevant information for accurate label prediction.
+    Enhanced classifier to predict y from z_c (z_c should contain task-relevant content information).
     Works on latent_dim (can be 768 or smaller).
     """
     def __init__(self, latent_dim=768, num_classes=2):
@@ -102,9 +101,9 @@ class TaskClassifier(nn.Module):
 
 class AdversarialClassifier(nn.Module):
     """
-    Enhanced adversarial classifier to predict y from z_d (non-task relevant space).
+    Enhanced adversarial classifier to predict y from z_d.
     Stronger architecture to better detect any task information in z_d.
-    We want z_d to NOT contain task information (~50% accuracy = random guess).
+    We want z_d to NOT contain task information, so we maximize this loss.
     Works on latent_dim (can be 768 or smaller).
     """
     def __init__(self, latent_dim=768, num_classes=2):
@@ -148,7 +147,7 @@ class AdversarialClassifier(nn.Module):
 
 
 class ContentDecoder(nn.Module):
-    """Decoder for task-relevant space z_c: D_c(z_c) -> embed_dim"""
+    """Decoder for z_c: D_c(z_c) -> embed_dim"""
     def __init__(self, latent_dim=64, embed_dim=768):
         super().__init__()
         self.fc = nn.Sequential(
@@ -168,7 +167,7 @@ class ContentDecoder(nn.Module):
 
 
 class DemographicDecoder(nn.Module):
-    """Decoder for non-task relevant space z_d: D_d(z_d) -> embed_dim"""
+    """Decoder for z_d: D_d(z_d) -> embed_dim"""
     def __init__(self, latent_dim=64, embed_dim=768):
         super().__init__()
         self.fc = nn.Sequential(
@@ -187,19 +186,19 @@ class DemographicDecoder(nn.Module):
         return self.fc(z_d)
 
 
-# ============== HEADS FOR z_c (Task-Relevant) and z_d (Non-Task Relevant) ==============
+# ============== HEADS FOR z_c and z_d ==============
 class ContentHead(nn.Module):
     """
-    Head to extract z_c (Task-Relevant Space) from shared BERT encoder.
+    Head to extract z_c (Content) from shared BERT encoder.
     Uses attention pooling + VAE bottleneck to compress to smaller latent space.
-    z_c should capture information relevant for predicting the task label y.
+    VAE is used for compression and regularization, not generation.
     """
     def __init__(self, d_model=768, latent_dim=64):
         super().__init__()
         self.d_model = d_model
         self.latent_dim = latent_dim
         
-        # Attention pooling: learn which tokens are important for task-relevant information
+        # Attention pooling: learn which tokens are important for content
         self.attention_pool = nn.Sequential(
             nn.Linear(d_model, 256),
             nn.Tanh(),
@@ -267,16 +266,16 @@ class ContentHead(nn.Module):
 
 class DemographicHead(nn.Module):
     """
-    Head to extract z_d (Non-Task Relevant Space) from shared BERT encoder.
+    Head to extract z_d (Demographic) from shared BERT encoder.
     Uses different attention pooling + VAE bottleneck to compress to smaller latent space.
-    z_d should be independent of the task label y (cannot predict y from z_d).
+    VAE is used for compression and regularization, not generation.
     """
     def __init__(self, d_model=768, latent_dim=64):
         super().__init__()
         self.d_model = d_model
         self.latent_dim = latent_dim
         
-        # Attention pooling: learn which tokens are important for non-task relevant information
+        # Attention pooling: learn which tokens are important for demographic
         self.attention_pool = nn.Sequential(
             nn.Linear(d_model, 256),
             nn.Tanh(),
@@ -357,12 +356,12 @@ class CD_Model(nn.Module):
         else:
             print("BERT loaded and trainable")
         
-        # Two separate heads: Task-Relevant (z_c) and Non-Task Relevant (z_d)
+        # Two separate heads: Content head and Demographic head
         self.content_head = ContentHead(d_model=d_model, latent_dim=latent_dim)
         self.demographic_head = DemographicHead(d_model=d_model, latent_dim=latent_dim)
         
-        # Classifier for task prediction from z_c (task-relevant space)
-        self.classifier = TaskClassifier(latent_dim=latent_dim, num_classes=num_classes)  # Predicts y from z_c (should work well)
+        # Classifier for task prediction from z_c
+        self.classifier = TaskClassifier(latent_dim=latent_dim, num_classes=num_classes)  # Predicts y from z_c (Content - should work well)
         
         # Separate decoders: D_c(z_c) and D_d(z_d) for reconstruction
         # This prevents z_d from collapsing to noise/zero
@@ -375,7 +374,7 @@ class CD_Model(nn.Module):
     
     def forward(self, input_ids, attention_mask, bert_embeddings=None):
         """
-        Forward pass with shared BERT encoder + 2 separate heads (SENNA framework).
+        Forward pass with shared BERT encoder + 2 separate heads (LIRD framework).
         
         Uses HSIC for independence constraints (no GRL/adversarial training).
         
@@ -399,7 +398,7 @@ class CD_Model(nn.Module):
         # Get CLS token for reconstruction target
         original_h = token_embeddings[:, 0, :]  # CLS token [batch_size, 768]
         
-        # Task prediction from z_c (task-relevant space - should work well)
+        # Task prediction from z_c (Content - should work well)
         logits_y_from_z_c = self.classifier(z_c)
         
         # Separate decoders: D_c(z_c) and D_d(z_d)
@@ -408,8 +407,8 @@ class CD_Model(nn.Module):
         reconstructed_d = self.decoder_d(z_d)  # [batch_size, embed_dim]
         reconstructed = reconstructed_c + reconstructed_d  # Additive reconstruction
         
-        # Adversarial classifier for monitoring only (not used in training loss)
-        # This is only for tracking z_d → y accuracy during training
+        # Adversarial classifier
+        # Monitoring only (not used in training loss directly to allow flexible training loop)
         logits_y_from_z_d = self.adversarial_classifier(z_d)
         
         return {
@@ -422,6 +421,6 @@ class CD_Model(nn.Module):
             'reconstructed_c': reconstructed_c,  # D_c(z_c) - for monitoring
             'reconstructed_d': reconstructed_d,  # D_d(z_d) - for monitoring and constraint
             'original_h': original_h,  # For reconstruction loss
-            'attn_c': attn_c,  # Attention weights for task-relevant space z_c
-            'attn_d': attn_d   # Attention weights for non-task relevant space z_d
+            'attn_c': attn_c,  # Attention weights for z_c (for visualization)
+            'attn_d': attn_d   # Attention weights for z_d (for visualization)
         }

@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
 """
-Fairness learning with disentangled representations from Natural Language (SENNA framework).
+Fairness learning with disentangled representations from Natural Language (LIRD framework).
 
 Architecture:
 1. Shared BERT encoder + 2 separate heads (Content head & Demographic head)
 2. Attention pooling in heads to extract z_c and z_d from shared BERT output
 3. Separate decoders: D_c(z_c) and D_d(z_d) for additive reconstruction
 
-SENNA Objectives (Adversarial + HSIC-based):
+LIRD Objectives (HSIC-based, no adversarial training):
 - L_task: z_c → y (high accuracy) - z_c contains task-relevant info
-- L_adv: Adversarial training via GRL - z_d is independent of task label y
+- L_y: HSIC(z_d, y) (minimize) - z_d is independent of task label y
 - L_ind: HSIC(z_c, z_d) (minimize) - z_c and z_d are statistically independent
 - L_rec: ||D_c(z_c) + D_d(z_d) - h||² (minimize) - additive reconstruction
+- L_var: Variance/energy constraint on z_d to prevent collapse to noise
 
 Key Objectives:
-- z_c (Task-Relevant Space): Can predict y well (high accuracy)
-- z_d (Non-Task Relevant Space): Cannot predict y (accuracy ~50/50, random guess), but carries input information
+- z_c (Content): Can predict y well (high accuracy)
+- z_d (Demographic): Cannot predict y (accuracy ~50/50, random guess), but carries input information
 - z_c ⊥ z_d: Statistically independent (HSIC ≈ 0)
 - D_c(z_c) + D_d(z_d) → h: Can reconstruct original representation
 - Attention visualization: See which tokens each head focuses on
 """
 
 import torch
+
+# Set allocator config to reduce fragmentation
+import os
+os.environ["PYTORCH_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 import os
@@ -98,14 +103,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lambda-task",
         type=float,
-        default=3.0,
+        default=8.0,
         help="Task loss weight (default: 10.0 to strongly prioritize learning task from z_c)"
     )
     parser.add_argument(
         "--lambda-adv",
         type=float,
         default=1.0,
-        help="Adversarial weight for label-independence (default: 1.0, SENNA framework)"
+        help="HSIC(z_d, y) weight for label-independence (default: 1.0, LIRD framework)"
     )
     parser.add_argument(
         "--lambda-rec",
@@ -124,6 +129,12 @@ if __name__ == "__main__":
         type=float,
         default=0.01,
         help="VAE KL loss weight for z_c and z_d to N(0,I) prior (default: 0.01, reduced from 1.0 to prevent information loss)"
+    )
+    parser.add_argument(
+        "--lambda-var",
+        type=float,
+        default=0.1,
+        help="Variance/energy constraint weight for z_d (prevents collapse, default: 0.1)"
     )
     parser.add_argument(
         "--latent-dim",
@@ -191,6 +202,9 @@ if __name__ == "__main__":
     full_dataset = TextDataset(sentences, labels, tokenizer, max_len=256, cached_data=cached_data_full)
     
     # Train
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     print(f"\n{'='*70}")
     print("TRAINING PHASE - Using full dataset")
     if use_cache:
@@ -201,17 +215,18 @@ if __name__ == "__main__":
     if args.batch_size is None:
         if torch.cuda.is_available():
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            # Reduced batch sizes to prevent OOM with the complex model architecture
             if gpu_memory_gb >= 30:  # RTX 5090, A100, etc. (30GB+)
-                args.batch_size = 200
+                args.batch_size = 64  # Reduced from 128
             elif gpu_memory_gb >= 20:  # RTX 4090, etc. (20-30GB)
-                args.batch_size = 64
+                args.batch_size = 32  # Reduced from 64
             elif gpu_memory_gb >= 10:  # RTX 3080, etc. (10-20GB)
-                args.batch_size = 16
+                args.batch_size = 8   # Reduced from 16
             else:  # Smaller GPUs (<10GB)
-                args.batch_size = 32
+                args.batch_size = 4   # Fixed bug (was 32), now 4
             print(f"Auto-detected batch size: {args.batch_size} (GPU memory: {gpu_memory_gb:.1f}GB)")
         else:
-            args.batch_size = 64
+            args.batch_size = 16
             print(f"Using CPU batch size: {args.batch_size}")
     
     model, history = train_cd_model(
@@ -223,6 +238,7 @@ if __name__ == "__main__":
         lambda_rec=args.lambda_rec,
         lambda_ortho=args.lambda_ortho,
         lambda_kl=args.lambda_kl,
+        lambda_var=args.lambda_var,
         latent_dim=args.latent_dim,
         lr=args.lr,
         use_cache=use_cache,

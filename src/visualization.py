@@ -779,17 +779,7 @@ def visualize_latent_space_pca(model, dataloader, num_samples=None, save_dir="vi
     ax.set_title('Non-Task Relevant (z_d) - PCA 2D Projection', fontsize=13, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(alpha=0.3)
-    
-    # Add note about why visual separation doesn't mean predictive power
-    note_text = (
-        "Note: Visual separation in 2D PCA ≠ Predictive power\n"
-        "z_d may have demographic structure that doesn't\n"
-        "correlate with task label (target: ~50% accuracy)"
-    )
-    ax.text(0.02, 0.98, note_text, transform=ax.transAxes,
-            fontsize=9, verticalalignment='top',
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7),
-            family='monospace')
+
     
     plt.tight_layout()
     filename = f"{save_dir}/latent_space_pca_2d.png"
