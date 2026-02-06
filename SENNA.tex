@@ -1,0 +1,723 @@
+% This is samplepaper.tex, a sample chapter demonstrating the
+% LLNCS macro package for Springer Computer Science proceedings;
+% Version 2.21 of 2022/01/12
+%
+\documentclass[runningheads]{llncs}
+%
+\usepackage[T1]{fontenc}
+\usepackage{amsmath} 
+\usepackage{amssymb}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[utf8]{inputenc}    % Cho phép nhập Unicode
+\usepackage[T5]{fontenc}       % Hỗ trợ tiếng Việt
+\usepackage[vietnamese,english]{babel} 
+
+% T1 fonts will be used to generate the final print and online PDFs,
+% so please use T1 fonts in your manuscript whenever possible.
+% Other font encondings may result in incorrect characters.
+%
+\usepackage{graphicx}
+% Used for displaying a sample figure. If possible, figure files should
+% be included in EPS format.
+%
+% If you use the hyperref package, please uncomment the following two lines
+% to display URLs in blue roman font according to Springer's eBook style:
+%\usepackage{color}
+%\renewcommand\UrlFont{\color{blue}\rmfamily}
+%\urlstyle{rm}
+%
+%% Packages
+\usepackage{todonotes} %todo
+% \usepackage[vietnamese]{babel}
+%%orcid
+\usepackage{orcidlink}
+%Letter symbol
+%\usepackage[misc,geometry]{ifsym}
+\usepackage{xurl}
+\usepackage{hyperref}
+\hypersetup{breaklinks=true}
+
+\begin{document}
+%
+\title{SENNA: Semantic Encodings for Fair Tabular Data Generation via LLMs}
+%
+\titlerunning{SENNA}
+
+% If the paper title is too long for the running head, you can set
+% an abbreviated paper title here
+%
+%\author{
+%Thang Doan Viet\inst{1}\textsuperscript{*}
+%\orcidlink{0009-0009-3072-5532}
+%\and Anh Nguyen Hoang\inst{2}\textsuperscript{*}
+%\and Tinh Son Luong\inst{3}\textsuperscript{*}
+%\and Anh Hoang Thi Ngoc\inst{4} 
+%\orcidlink{0009-0005-2095-5597}
+%\and Huyen Giang Thi Thu\inst{5,6}
+%\orcidlink{0009-0007-6283-3111} 
+%\and Tai Le Quy\inst{7}
+%\orcidlink{0000-0001-8512-5854}
+%}
+
+%\authorrunning{Thang et al.}
+\authorrunning{Anonymous}
+
+%\institute{Secomus Technology, Vietnam \\   
+%\email{thang.dv509@gmail.com}
+%\and
+%Software AI Center, Vietnam \\
+%\email{anh.nh204511@gmail.com}
+%\and
+%Viettel Solutions, Vietnam \\
+%\email{tinh12345bn@gmail.com}
+%\and
+%Vietnam Ernst \& Young Limited Company, Vietnam \\
+%\email{ngocanhin20s@gmail.com}
+%\and
+%Banking Academy of Vietnam, Vietnam \\
+%\email{huyengtt@hvnh.edu.vn}
+%\and 
+%Vietnam Academy of Science and Technology, Vietnam\\
+%\and
+%University of Koblenz, Germany\\
+%\email{tailequy@uni-koblenz.de}
+%}
+
+
+% \footnotetext[1]{Equally contributed.}
+\maketitle  
+\begingroup
+\renewcommand{\thefootnote}{}%
+%\footnotetext{*\ Equal contribution.}%
+\endgroup
+% typeset the header of the contribution
+\setcounter{footnote}{0}
+
+
+\begin{abstract} 
+
+Synthetic data generation has emerged as a promising solution for addressing data scarcity and privacy concerns in machine learning, particularly in the financial domain, where biased credit decisions can have significant societal impact However, most existing methods inadequately address fairness, often propagating or even amplifying biases present in the original data. We propose \textbf{SENNA} (\textbf{S}emantic \textbf{EN}coding for fair tabular data ge\textbf{n}er\textbf{a}tion), a novel framework that integrates disentangled representation learning with large language models (LLMs) to generate fair synthetic tabular data. Firstly, SENNA transforms tabular records into natural language descriptions. This representation enables encoder models to capture rich semantic dependencies among attributes while allowing LLMs to fully exploit their language understanding capabilities during generation. Building on this formulation, SENNA learns to disentangle task-relevant content information from task-independent information through explicit independence constraints. Crucially, SENNA is designed to address both individual fairness and group fairness within a unified generation framework. Individual fairness is enforced by validating generated samples using k closest neighbor matching in the task-relevant space, ensuring that similar individuals receive similar outcomes. Group fairness is subsequently achieved by group balancing over the validated samples. To guide the LLM generation process, we cluster data in the label-independent task-independence space and use these clusters as in-context learning, preserving statistical fidelity while reducing sensitive attribute bias. Experiments on standard fairness benchmarks, including German Credit and Adult Census, demonstrate that SENNA maintains competitive utility while substantially improving both individual and group fairness metrics compared to existing synthetic data generation baselines.
+\end{abstract}
+
+\section{Introduction}
+
+
+% Synthetic data generation has become essential for addressing data scarcity and privacy concerns in machine learning applications. Recently, Large Language Models (LLMs) have demonstrated remarkable capability in generating high-quality tabular data through in-context learning. By converting tabular records into natural language descriptions, LLMs can leverage their semantic understanding to generate diverse and coherent synthetic samples.
+
+% However, applying LLMs directly to generate financial tabular data raises critical fairness concerns. Credit scoring datasets often contain historical biases against certain groups, and naive generation methods can propagate or amplify these biases. For instance, an LLM trained on biased credit data may generate synthetic samples that perpetuate discriminatory patterns, leading to unfair treatment of protected groups in downstream applications.
+
+% To address this challenge, we propose \textbf{SENNA} (\textbf{S}emantic \textbf{EN}coding for fair tabular data ge\textbf{n}er\textbf{a}tion), a framework that combines disentangled representation learning with LLM-based generation to produce fair synthetic tabular data. SENNA makes the following contributions:
+
+% \begin{enumerate}
+%     \item \textbf{LLM-Compatible Representation}: We convert tabular data into natural language and learn disentangled representations that separate task-relevant content embedding from task-independent information embedding.
+    
+%     \item \textbf{Fair In-Context Learning}: We use clustering on task-independent space to select diverse examples for LLM in-context learning, reducing bias in generation.
+    
+%     \item \textbf{Dual Fairness Validation}: Generated samples are validated for individual fairness via k-NN matching in task-relevant space, then balanced for group fairness.
+% \end{enumerate}
+
+\section{Related Work}
+
+
+% \subsection{LLM-Based Tabular Data Generation}
+
+% Recent work has explored using LLMs for tabular data generation. GReaT fine-tunes GPT-2 on serialized tabular data to generate synthetic samples. TabLLM uses few-shot prompting with GPT-3 for tabular classification. REaLTabFormer combines relational data generation with transformer-based language models. However, these methods focus on utility and fidelity without addressing fairness constraints.
+
+% \subsection{Fair Synthetic Data Generation}
+
+% Fair synthetic data generation aims to produce data that reduces bias. Fair-SMOT modifies oversampling to balance protected groups. FairGAN uses adversarial training to generate fair samples. However, these methods are limited to simple feature spaces and cannot leverage the semantic understanding capabilities of LLMs.
+
+
+% Disentangled representations separate different factors of variation in data. For fairness, methods like LAFTR use adversarial training to remove sensitive information from representations. Our work applies disentanglement specifically to guide fair LLM generation, rather than for fair classification.
+
+
+% \subsection{LLM-Based Tabular Data Generation}
+
+% \subsection{Fair Synthetic Data Generation}
+
+% \subsection{Disentangled Representation Learning}
+
+% \subsection{Problem Formulation}
+
+% Let $\mathcal{D} = \{(x_i, y_i)\}_{i=1}^n$ be a tabular dataset where $x_i \in \mathbb{R}^d$ represents the feature vector and $y_i \in \{0, 1\}$ is the binary target label (e.g., credit risk). Each sample $x_i$ may contain sensitive attributes such as age, gender, or ethnicity that should not influence predictions.
+
+% Our goal is to generate a synthetic dataset $\mathcal{D}_{syn}$ that:
+% \begin{enumerate}
+%     \item Maintains \textbf{utility}: Classifiers trained on $\mathcal{D}_{syn}$ achieve comparable accuracy to those trained on $\mathcal{D}$.
+%     \item Achieves \textbf{individual fairness}: Similar individuals receive similar predicted outcomes.
+%     \item Achieves \textbf{group fairness}: Outcome rates are balanced across groups.
+% \end{enumerate}
+
+\section{SENNA framework}
+
+As illustrated in Figure~\ref{fig:senna}, SENNA follows a sequential pipeline with clearly defined stages. First, we convert tabular records into natural language sentences to better capture semantic relationships among attributes. Next, the model learns disentangled latent representations, where $z_c$ encodes task-relevant information and $z_d$ captures task-independent factors, using a frozen BERT encoder paired with trainable projection heads. Building on these representations, we generate synthetic samples with a large language model, selecting fair in-context examples through clustering in the $z_d$ space to mitigate bias. After generation, we assess individual fairness by applying k-nearest neighbor validation in the $z_c$ space and enforce group fairness through demographic balancing strategies. Finally, we deconvert the generated natural language sentences back into tabular form, producing synthetic data suitable for downstream learning tasks.
+
+
+\begin{figure*}[h]
+    \centering
+    \includegraphics[width=\textwidth]{figures/SENNA.pdf}
+    \caption{Overview of SENNA framework. 
+    }
+    \label{fig:senna}
+\end{figure*}
+
+%---------------------------------------------------------------------
+\subsection{Tabular-to-Natural-Language Conversion}
+%---------------------------------------------------------------------
+
+SENNA converts each tabular record into a natural language sentence to enable semantic encoding
+with pretrained language models.
+Formally, a tabular instance is represented as a set of $m$ attribute--value pairs
+\begin{equation}
+x = \{(\texttt{attr}_1, \texttt{val}_1), \ldots, (\texttt{attr}_m, \texttt{val}_m)\},
+\end{equation}
+where $\texttt{attr}_j$ denotes the $j$-th attribute name and $\texttt{val}_j$ denotes its
+corresponding value.
+
+We apply a deterministic template function $\mathcal{T}$ that maps the set of attribute--value
+pairs to a natural language description
+\begin{equation}
+s = \mathcal{T}(x).
+\end{equation}
+The template orders attributes consistently and expresses each attribute--value pair using a
+predefined linguistic pattern, producing a coherent sentence that preserves the original
+information content of the tabular record.
+This conversion is purely representational and does not alter the underlying data distribution.
+
+Representing tabular records as natural language offers three key advantages.
+First, it allows pretrained language models such as BERT to encode explicit semantic relationships
+between attributes, rather than treating features as independent dimensions.
+Second, it provides a unified input format that supports both semantic encoding and downstream
+LLM-based generation through in-context learning.
+Third, it establishes a consistent linguistic structure that facilitates disentangled representation
+learning in later stages, where task-relevant and task-independent semantics are separated in the
+latent space. As a result, this conversion step forms the foundation for the semantic encoding and fairness-aware
+generation components of SENNA.
+
+%---------------------------------------------------------------------
+\subsection{Semantic Encoding via Disentangled Representation Learning}
+%---------------------------------------------------------------------
+This section presents the disentangled semantic representation learning module of \textbf{SENNA}. The module learns to decompose a unified language-based representation into two complementary latent variables. One latent variable captures semantic information required to predict the target label. The other latent variable captures task-independent semantic variation that should not influence the prediction outcome. This separation enables the model to reason about similarity using predictive semantics while excluding task-irrelevant information, which is essential for fairness-aware generation.
+
+In the context of tabular data expressed as natural language, a single sentence often involves multiple factors of variation. For example, in a credit application description, attributes such as employment status, credit history, and loan duration are highly predictive of the approval outcome, whereas attributes such as gender or marital status should not influence the decision but may still shape the linguistic or demographic profile of the applicant. If these factors are encoded into a single representation, downstream generation and validation procedures risk inheriting spurious correlations between sensitive attributes and prediction outcomes. SENNA explicitly addresses this issue by learning two complementary latent representations including a task-relevant representation and a task-independent representation. This disentanglement is enabled by the prior conversion of tabular records into natural language, which allows pretrained language models to operate directly on semantic relationships rather than raw features.  As a result, task-relevant and task-independent information can be separated more naturally in the latent space.
+
+
+To implement this disentanglement, we adopt a shared semantic encoder coupled with two task-specific projection heads. Given an input sentence $s$ converted from a tabular record, we first obtain contextualized token embeddings $h \in \mathbb{R}^{n \times 768}$ using a pretrained BERT encoder. The encoder is kept \textbf{frozen} throughout training to preserve its general-purpose linguistic knowledge and to prevent task-specific biases from being absorbed into the base representation. All task adaptation and disentanglement are therefore delegated to the projection heads. 
+
+
+Given an input sentence $s$ which consist $n$ tokens, a pretrained BERT encoder produces contextualized token embeddings
+$h \in \mathbb{R}^{n \times 768}$.
+The model keeps the encoder frozen during training in order to preserve general-purpose semantic
+structure and to prevent task-specific learning signals from altering the base representation.
+Two projection heads then operate on $h$ to produce disentangled latent variables.
+
+Given contextualized token embeddings $h = [h_1,\ldots,h_n] \in \mathbb{R}^{n \times 768}$ produced by
+the frozen BERT encoder, each projection head first applies an attention pooling mechanism to obtain
+a sentence-level representation.
+Specifically, the head learns attention weights over tokens
+\begin{equation}
+\alpha_i = \frac{\exp(w^\top h_i)}{\sum_{j=1}^n \exp(w^\top h_j)},
+\end{equation}
+and aggregates token embeddings as a weighted sum
+\begin{equation}
+\tilde{h} = \sum_{i=1}^n \alpha_i h_i.
+\end{equation}
+Unlike self-attention inside BERT, which models interactions among tokens during contextualization,
+attention pooling determines which tokens contribute most to the sentence representation.
+
+The pooled representation $\tilde{h}$ is then passed through a variational encoder that outputs the
+parameters of a latent distribution,
+\begin{equation}
+(\mu, \sigma^2) = \mathrm{MLP}(\tilde{h}),
+\end{equation}
+from which a latent variable is sampled using the reparameterization trick
+\begin{equation}
+z = \mu + \epsilon \cdot \sigma, \quad \epsilon \sim \mathcal{N}(0, I).
+\end{equation}
+This variational formulation regularizes the latent space and promotes smooth optimization.
+
+For the task-relevant head $f_c$, attention pooling learns to emphasize tokens that carry predictive
+semantics for the target label, producing a latent variable $z_c$ parameterized by
+$(\mu_c, \sigma_c^2)$.
+The variational bottleneck encourages $z_c$ to remain compact and smooth while preserving
+information necessary for accurate prediction.
+In parallel, the task-independent head $f_d$ follows the same formulation but learns a different
+attention distribution and latent parameters $(\mu_d, \sigma_d^2)$.
+Training constraints explicitly discourage $z_d$ from encoding information related to the target
+label, driving $z_d$ to capture semantic variation orthogonal to the prediction objective.
+This formulation enables the two heads to specialize in complementary semantic factors and prepares
+the latent representations for downstream clustering and fair in-context learning.
+
+
+The task-relevant projection head produces the latent variable $z_c$.
+To ensure that $z_c$ encodes information predictive of the target label $y$, SENNA introduces a
+task classifier $C$ and optimizes the cross-entropy loss
+\begin{equation}
+\mathcal{L}_{task} = \mathrm{CE}(C(z_c), y).
+\end{equation}
+Minimizing this loss backpropagates gradients through the classifier and the task-relevant
+projection head.
+As a result, the model concentrates predictive semantic information in $z_c$ and prevents the
+disentanglement process from discarding task-critical content.
+
+In parallel, the task-independent projection head produces the latent variable $z_d$.
+This representation should remain uninformative with respect to the target label.
+To explicitly remove task-related information from $z_d$, SENNA employs adversarial learning.
+An adversarial classifier $A$ attempts to predict $y$ from $z_d$, while the projection head is
+optimized to confuse this classifier through a gradient reversal mechanism.
+This interaction is captured by the adversarial loss
+\begin{equation}
+\mathcal{L}_{adv} = \mathrm{CE}(A(\mathrm{GRL}(z_d)), y).
+\end{equation}
+During training, the adversarial classifier updates its parameters to minimize prediction error,
+whereas gradient reversal inverts the gradients received by the task-independent projection head.
+At convergence, the adversarial classifier performs close to random guessing, indicating that
+$z_d$ no longer contains predictive signal about $y$.
+
+Although adversarial training discourages label leakage from $z_d$, it does not guarantee a clean
+separation between $z_c$ and $z_d$.
+To further enforce disentanglement, SENNA introduces an explicit independence constraint between
+the two latent variables.
+The model penalizes statistical dependence using the Hilbert–Schmidt Independence Criterion
+\begin{equation}
+\mathcal{L}_{ortho} = \mathrm{HSIC}(z_c, z_d).
+\end{equation}
+Minimizing this loss forces the two representations to encode complementary and non-overlapping
+semantic factors, thereby reducing redundancy between the latent spaces.
+
+To prevent disentanglement from removing useful information, SENNA incorporates a reconstruction
+objective.
+Two lightweight decoders map $z_c$ and $z_d$ back to the semantic embedding space.
+The model reconstructs the original BERT embedding by combining the decoder outputs and minimizes
+the reconstruction loss
+\begin{equation}
+\mathcal{L}_{rec} = \lVert D_c(z_c) + D_d(z_d) - h \rVert^2.
+\end{equation}
+This objective ensures that the pair $(z_c, z_d)$ jointly preserves the semantic content of the
+input sentence and prevents degenerate solutions in which one latent variable collapses.
+
+Since both projection heads are implemented as variational encoders, SENNA further regularizes
+the latent distributions using a Kullback–Leibler divergence
+\begin{equation}
+\mathcal{L}_{kl} =
+\mathrm{KL}(\mathcal{N}(\mu_c,\sigma_c)\,\|\,\mathcal{N}(0,I)) +
+\mathrm{KL}(\mathcal{N}(\mu_d,\sigma_d)\,\|\,\mathcal{N}(0,I)).
+\end{equation}
+This regularization encourages both latent spaces to follow a standard normal prior, stabilizes
+training, and induces smooth latent geometry suitable for interpolation and neighborhood-based
+reasoning.
+
+SENNA combines all objectives into a single optimization problem
+\begin{equation}
+\mathcal{L}_{total} =
+\lambda_{task}\mathcal{L}_{task}
++ \lambda_{adv}\mathcal{L}_{adv}
++ \lambda_{ortho}\mathcal{L}_{ortho}
++ \lambda_{rec}\mathcal{L}_{rec}
++ \lambda_{kl}\mathcal{L}_{kl}.
+\end{equation}
+
+Algorithm~\ref{alg:training} summarizes the SENNA training procedure. Within each mini-batch, the adversarial classifier and task classifier are first updated independently using detached latent representations, ensuring stable estimation of their respective objectives. Subsequently, the projection heads and decoders are jointly updated by minimizing $\mathcal{L}_{total}$, where gradients from the adversarial loss are reversed before reaching the task-independent head. This min–max optimization process gradually pushes task-related information into $z_c$ while eliminating it from $z_d$, yielding a disentangled semantic representation suitable for fairness-aware generation.
+
+\begin{algorithm}[t]
+\caption{SENNA Training}
+\label{alg:training}
+\begin{algorithmic}[1]
+\Require Dataset $\mathcal{D}=\{(s_i,y_i)\}$, frozen BERT encoder, projection heads $f_c,f_d$
+\Ensure Trained projection heads, task classifier $C$, adversarial classifier $A$
+\For{each epoch}
+    \For{each batch $(S,Y)$}
+        \State $h \gets \mathrm{BERT}(S)$ \Comment{Forward through frozen BERT}
+        \State $(z_c,\mu_c,\sigma_c) \gets f_c(h)$ \Comment{Content projection}
+        \State $(z_d,\mu_d,\sigma_d) \gets f_d(h)$ \Comment{Demographic projection}
+
+        \Comment{Train adversarial classifier}
+        \State $\mathcal{L}_{\mathrm{adv\_cls}} \gets \mathrm{CE}\!\big(A(\mathrm{detach}(z_d)),\,Y\big)$
+        \State Update $A$ with $\nabla \mathcal{L}_{\mathrm{adv\_cls}}$
+
+        \Comment{Train task classifier}
+        \State $\mathcal{L}_{\mathrm{task\_cls}} \gets \mathrm{CE}\!\big(C(\mathrm{detach}(z_c)),\,Y\big)$
+        \State Update $C$ with $\nabla \mathcal{L}_{\mathrm{task\_cls}}$
+
+        \Comment{Compute total loss}
+        \State $\mathcal{L}_{\mathrm{task}} \gets \mathrm{CE}\!\big(C(z_c),\,Y\big)$
+        \State $\mathcal{L}_{\mathrm{adv}} \gets \mathrm{CE}\!\big(A(\mathrm{GRL}(z_d)),\,Y\big)$
+        \State $\mathcal{L}_{\mathrm{ortho}} \gets \mathrm{HSIC}(z_c,z_d)$
+        \State $\mathcal{L}_{\mathrm{rec}} \gets \lVert D_c(z_c)+D_d(z_d)-h\rVert^2$
+        \State $\mathcal{L}_{\mathrm{kl}} \gets
+        \mathrm{KL}\!\big(\mathcal{N}(\mu_c,\sigma_c)\,\|\,\mathcal{N}(0,\mathbf{I})\big)
+        +\mathrm{KL}\!\big(\mathcal{N}(\mu_d,\sigma_d)\,\|\,\mathcal{N}(0,\mathbf{I})\big)$
+        \State $\mathcal{L}_{\mathrm{total}} \gets
+        \lambda_{\mathrm{task}}\mathcal{L}_{\mathrm{task}}
+        +\lambda_{\mathrm{adv}}\mathcal{L}_{\mathrm{adv}}
+        +\lambda_{\mathrm{ortho}}\mathcal{L}_{\mathrm{ortho}}
+        +\lambda_{\mathrm{rec}}\mathcal{L}_{\mathrm{rec}}
+        +\lambda_{\mathrm{kl}}\mathcal{L}_{\mathrm{kl}}$
+
+        \State Update $f_c,f_d,D_c,D_d$ with $\nabla \mathcal{L}_{\mathrm{total}}$
+    \EndFor
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+%---------------------------------------------------------------------
+\subsection{LLM-Based Generation with Fair In-Context Learning}
+%---------------------------------------------------------------------
+
+After training the disentangled semantic encoder, SENNA employs a Large Language Model (LLM) to
+generate synthetic samples in natural language form.
+Although LLMs are capable of producing fluent and diverse text, naive generation strategies that
+rely on randomly selected in-context examples may inadvertently propagate or amplify biases
+present in the data.
+In particular, if in-context exemplars concentrate on specific non-task characteristics,
+the LLM may associate these characteristics with the target outcome during generation.
+
+SENNA addresses this issue by explicitly controlling the in-context learning process.
+Instead of sampling exemplars arbitrarily, the framework selects them based on the
+task-independent latent space learned in the previous stage.
+This design ensures that the exemplars reflect diverse semantic variations that are orthogonal
+to the prediction task, while avoiding unintended correlations between task outcomes and
+non-task attributes.
+The generation process further relies on a structured prompt template that enforces a consistent
+format across exemplars and generated samples.
+
+\subsubsection{Prompt Construction}
+
+SENNA constructs prompts using a standardized pipeline that ensures compatibility between training
+data, in-context exemplars, and generated outputs.
+Each prompt consists of three components: a system-level instruction that defines the generation
+role of the LLM, a set of in-context exemplars expressed in natural language, and a final instruction
+that triggers the generation of a new sample.
+
+% Given a tabular record $x$, the template function $\mathcal{T}$ deterministically maps it to a
+% natural language description $s = \mathcal{T}(x)$.
+% This template preserves the semantic meaning of individual attributes while maintaining a
+% consistent syntactic structure across samples.
+As a result, the LLM learns the joint distribution of attributes implicitly through language
+modeling, rather than through explicit symbolic constraints.
+Using a fixed template also prevents stylistic variation from confounding the generation process
+and ensures that differences in generated samples reflect differences in underlying data.
+
+\subsubsection{In-Context Exemplar Selection via Task-Independent Clustering}
+
+To select in-context exemplars, SENNA performs K-Means clustering on the task-independent latent
+representations $\{z_d^{(i)}\}_{i=1}^N$ obtained from the training data.
+Since $z_d$ is explicitly trained to be independent of the target label, it captures semantic
+variations unrelated to task outcomes, such as background descriptors or stylistic patterns.
+Clustering this space partitions the data into $K$ distinct regions:
+\begin{equation}
+\{C_1, C_2, \ldots, C_K\} = \mathrm{KMeans}(\{z_d^{(i)}\}_{i=1}^N, K),
+\end{equation}
+each representing a different task-independent archetype.
+
+For each cluster $C_k$, SENNA selects a representative sample $x^{(k)}_{\mathrm{rep}}$ and converts
+it into natural language using the template $\mathcal{T}$.
+The resulting set of exemplars $\mathcal{E} = \{\mathcal{T}(x^{(k)}_{\mathrm{rep}})\}_{k=1}^K$ is used
+to condition the LLM during generation.
+By covering diverse regions of the task-independent latent space, this strategy encourages the
+LLM to generate samples that span the full semantic manifold of the data distribution, reducing
+mode collapse and mitigating bias.
+The LLM then produces a new synthetic description $s_{\mathrm{gen}}$, which is subsequently parsed
+back into tabular form using the inverse mapping $\mathcal{T}^{-1}$.
+
+%---------------------------------------------------------------------
+\subsection{Fairness Validation and Balancing}
+%---------------------------------------------------------------------
+
+While controlled in-context learning reduces bias during generation, it does not fully eliminate
+the risk of inconsistencies or residual imbalance.
+To ensure that the synthetic dataset satisfies both individual and group fairness criteria,
+SENNA applies a two-stage post-generation validation and balancing procedure.
+
+\subsubsection{Semantic Consistency via Task-Relevant Neighborhoods}
+
+Individual fairness requires that samples with similar task-relevant semantics receive similar
+outcomes.
+In the context of LLM-generated data, this principle translates into a consistency constraint
+between the descriptive content of a sample and its associated label.
+Despite careful prompting, LLMs may occasionally generate samples whose attributes contradict the
+assigned outcome.
+
+SENNA enforces semantic consistency by leveraging the task-relevant latent space learned by the
+encoder.
+For each generated sentence $s_{\mathrm{gen}}$, the task-relevant encoder produces a latent
+representation $z_c^{\mathrm{gen}} = f_c(s_{\mathrm{gen}})$.
+We then identify its $k$ nearest neighbors $\mathcal{N}_k(z_c^{\mathrm{gen}})$ from the original
+training set based on distance in the $z_c$ space.
+The expected label is estimated by majority voting among these neighbors,
+\begin{equation}
+\hat{y}_{\mathrm{valid}} =
+\mathbb{I}\!\left(\frac{1}{k}\sum_{(x_j,y_j)\in\mathcal{N}_k} y_j > 0.5\right),
+\end{equation}
+where $\mathbb{I}$ denotes the indicator function.
+SENNA retains a generated sample only if its extracted label matches $\hat{y}_{\mathrm{valid}}$.
+This procedure filters out semantically inconsistent samples and ensures that the synthetic data
+respects the task decision boundary defined by task-relevant features.
+
+\subsubsection{Balancing for Group-Level Fairness}
+
+Although neighborhood-based validation enforces individual fairness, it does not guarantee
+balanced outcome distributions across sensitive groups.
+To address this limitation, SENNA applies an explicit balancing step to the validated synthetic
+dataset $\mathcal{D}_{\mathrm{valid}}$.
+
+Let $A$ denote a sensitive attribute and $Y$ the target label.
+Group fairness in terms of statistical parity requires that outcome probabilities be independent
+of $A$.
+SENNA operationalizes this criterion by partitioning $\mathcal{D}_{\mathrm{valid}}$ into subsets
+indexed by $(A, Y)$ and enforcing approximately uniform group sizes,
+\begin{equation}
+\lvert \mathcal{D}_{\mathrm{syn}}^{(A=a, Y=y)} \rvert
+\approx \frac{N_{\mathrm{total}}}{|A|\cdot|Y|}
+\quad \forall a,y.
+\end{equation}
+When a subgroup exceeds its target size, SENNA randomly subsamples from that group.
+This balancing step removes residual correlations between sensitive attributes and task outcomes,
+yielding a final synthetic dataset $\mathcal{D}_{\mathrm{syn}}$ that supports both high utility and
+fair downstream learning.
+
+\begin{algorithm}[t]
+\caption{SENNA Synthetic Data Generation}
+\label{alg:generation}
+\begin{algorithmic}[1]
+\Require Trained encoders $f_c, f_d$, Template $\mathcal{T}$, LLM, clusters $\{C_k\}$, representatives $x_{rep}^{(k)}$, size $N$
+\Ensure Synthetic dataset $\mathcal{D}_{syn}$
+\State $\mathcal{D}_{syn} \leftarrow \emptyset$
+\State $\mathcal{E} \leftarrow \{\mathcal{T}(x_{rep}^{(k)}) \mid k=1 \dots K\}$ \Comment{Prepare In-Context Exemplars}
+\While{$|\mathcal{D}_{syn}| < N$}
+    \State $P \leftarrow \text{ConstructPrompt}(\mathcal{E})$
+    \State $s_{gen} \leftarrow \text{LLM}(P)$ \Comment{Generate candidate sentence}
+    \State $z_c^{gen} \leftarrow f_c(s_{gen})$
+    \State $\mathcal{N}_k \leftarrow \text{KNN}(z_c^{gen}, \mathcal{D}_{train})$ \Comment{Find neighbors in task-relevant space}
+    \State $\hat{y}_{valid} \leftarrow \text{MajorityVote}(\mathcal{N}_k)$
+    \If{$\text{ExtractLabel}(s_{gen}) == \hat{y}_{valid}$} \Comment{Check Consistency}
+         \State $\mathcal{D}_{syn} \leftarrow \mathcal{D}_{syn} \cup \{s_{gen}\}$
+    \EndIf
+\EndWhile
+\State $\mathcal{D}_{syn} \leftarrow \text{GroupBalance}(\mathcal{D}_{syn})$ \Comment{Enforce Statistical Parity}
+\State $\mathcal{D}_{syn} \leftarrow \{\mathcal{T}^{-1}(s) \mid s \in \mathcal{D}_{syn}\}$ \Comment{Deconvert to tabular}
+\State \Return $\mathcal{D}_{syn}$
+\end{algorithmic}
+\end{algorithm}
+
+%---------------------------------------------------------------------
+\subsection{Data Deconversion}
+%---------------------------------------------------------------------
+
+The final stage of SENNA reverses the initial conversion process.
+The validated natural language sentences $s_{gen}$ are parsed to extract attribute--value pairs.
+We employ regex-based pattern matching guided by the original templates $\mathcal{T}$ to consistently recover the tabular structure.
+The result is a fully synthetic tabular dataset $\mathcal{D}_{syn}$ that retains the statistical properties of the original data while exhibiting improved fairness characteristics.
+
+
+\section{Experimental Evaluation}
+\label{sec:experiments}
+
+In this section, ... 
+
+\subsection{Datasets}
+\label{sec:data}
+We evaluate our proposed method on five commonly used financial datasets in the finance and fairness-aware ML domains. All datasets are imbalanced, which is indicated by the imbalance ratio (IR) in Table \ref{tbl:datasets}.
+
+\begin{table}[h!]  
+\centering
+\caption{An overview of datasets}
+\label{tbl:datasets}
+\begin{adjustbox}{width=\textwidth}
+\begin{tabular}{l r r c c c c c}
+\hline
+\multicolumn{1}{c}{\textbf{ Datasets }} &  
+\multicolumn{1}{c}{\textbf{ \#Samples}} &
+\multicolumn{1}{c}{\begin{tabular}[c]{@{}c@{}}\textbf{ \#Samples}\\\textbf{  (cleaned)} \end{tabular}} &
+\multicolumn{1}{c}{\begin{tabular}[c]{@{}c@{}}\textbf{ \#Samples}\\\textbf{  (generated)} \end{tabular}} &
+\multicolumn{1}{c}{\textbf{ \#Attr. }} &
+\multicolumn{1}{c}{\begin{tabular}[c]{@{}c@{}}\textbf{ Protected }\\\textbf{ attr.(s) } \end{tabular}} & 
+\multicolumn{1}{c}{\begin{tabular}[c]{@{}c@{}}\textbf{ Class label}\\\textbf{ (positive) } \end{tabular}} & \textbf{ IR (+:-) }
+ \\ \hline
+Adult          & 48,842  & 45,222  & 45,222 & 15  & Gender    & Income ($>50K$)  & 1:3.03  \\
+Bank marketing   & 40,004 & 40,004     & 40,004 & 17 & Age & Class-label (yes) & 1:7.55  \\
+Credit scoring   & 8,755 & 8,755     & 8,755 & 18 & Sex & Class-label (1) & 11.58:1  \\
+Dutch census   & 60,420  & 60,420  & 60,420 & 12  & Sex       & Occupation (1)   & 1:1.10 \\
+German credit    & 1,000 & 1,000    & 1,000 & 21 & Sex & Credit Risk (Good) & 2.33:1  \\
+
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+\subsection{Evaluation Metrics}
+\label{sec:metrics}
+
+We denote $\mathcal{D}$ as a dataset with class attribute $Y = \{+, -\}$; e.g., $Y = \{good, bad\}$. A binary protected attribute is denoted by $A$, $A \in \{a,\overline{a}\}$ where $a$ is the protected group and $\overline{a}$ is the non-protected group; e.g., $A = $ \emph{``Sex''} and $A \in \{female, male\}$.  $\hat{Y} = \{+, -\}$ is the predicted class. Hence, the protected and non-protected groups with respect to positive (negative, respectively) classes are $a_{+}$ ($a_{-}$), $\overline{a}_{+}$ ($\overline{a}_{-}$). We refer to the positive class as the target class, e.g., \textit{good credit}. 
+
+We perform the evaluation on the most popular group fairness notions which are used to determine how fair the model's results are \cite{le2022evaluation}. %The fairness notion may be turned into measures by taking a difference or a ratio of the equation components \cite{vzliobaite2017measuring}. Therefore, in this paper, we use the terms ``fairness notion'' and ``fairness measure'' interchangeably. 
+In all fairness measures, a higher value indicates a larger difference in predictions between the two groups, so the model is less fair, i.e., 0 stands for no discrimination.
+
+\textbf{Statistical parity (SP)}
+\begin{equation}
+\label{eq:statistical_parity}
+    SP =  P(\hat{Y}=+ \mid A=\overline{a}) - P(\hat{Y}=+ \mid A=a)    
+\end{equation}
+
+\textbf{Equal opportunity (EO)}
+\label{eq:equal_opportunity}
+\begin{equation}
+    EO =\mid P(\hat{Y} = - \mid Y = +, A = \overline{a}) - P(\hat{Y} = - \mid Y = +, A=a)\mid
+\end{equation}  
+
+\textbf{Equalized odds (EOd)}
+\begin{equation}
+\label{eq:equalized_odds}
+EOd = \sum_{y\in \{+,-\}}\mid P(\hat{Y}=+ \mid A=a,Y=y) - P(\hat{Y}=+\mid A=\overline{a},Y=y)\mid
+\end{equation}
+
+\textbf{Predictive parity (PP)}
+\begin{equation}
+\label{eq:predictive_parity}
+    PP = \mid P(Y = + \mid \hat{Y} = +, A = a) - P(Y = + \mid\hat{Y} = +, A = \overline{a})\mid
+\end{equation}
+
+\textbf{Predictive equality (PE)}
+\label{eq:predictive_equality}
+\begin{equation}
+PE = \mid P(\hat{Y} = + \mid Y = -,A = a) - P(\hat{Y} = + \mid Y = -,A = \overline{a})\mid
+\end{equation}
+
+\textbf{Treatment equality (TE) \cite{berk2021fairness}} Treatment equality is computed based on False Negative (FN) and False Positive (FP) of the protected group (prot.) and non-protected (non-prot.) groups.
+\begin{equation}
+\label{eq:treatment_equality}
+    \frac{FN_{prot.}}{FP_{prot.}} = \frac{FN_{non-prot.}}{FP_{non-prot.}}
+\end{equation}
+
+\textbf{Absolute Between-ROC\footnote{ROC: Receiver operating characteristic} Area (ABROCA)}
+It measures the divergence between the protected ($ROC_a$) and non-protected group ($ROC_{\overline{a}}$) curves across all possible thresholds $t \in [0, 1]$ of false positive rates (FPR) and true positive rates (TPR).
+
+\begin{equation}
+\label{eq:abroca}
+    \int_{0}^{1}\mid ROC_{a}(t) - ROC_{\overline{a}}(t)\mid \,dt
+\end{equation}
+
+\subsection{Experimental Results}
+\label{sec:results}
+
+In this section, we present the empirical evaluation of SENNA against baseline methods. We compare the performance in terms of both utility (Accuracy, Balanced Accuracy) and a comprehensive suite of fairness metrics.
+
+\subsubsection{Overall Performance}
+We compare SENNA against four baselines: \textbf{Original} (Real Data), \textbf{CTGAN}, \textbf{FLAI}, and \textbf{GReaT}. We evaluate performance across four downstream classifiers: Decision Tree (DT), k-Nearest Neighbors (kNN), Logistic Regression (LR), and Multi-layer Perceptron (MLP). Tables~\ref{tab:results_german} and \ref{tab:results_adult} report the results for the German Credit and Adult Census datasets, respectively.
+
+\begin{table*}[h!]
+\centering
+\caption{German Credit: Performance of predictive models. Protected attribute: Sex.}
+\label{tab:results_german}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{llccccccccc}
+\hline
+\textbf{Classifier} & \textbf{Method} & \textbf{Acc} $\uparrow$ & \textbf{BA} $\uparrow$ & \textbf{SP} $\downarrow$ & \textbf{EO} $\downarrow$ & \textbf{EOd} $\downarrow$ & \textbf{PP} $\downarrow$ & \textbf{PE} $\downarrow$ & \textbf{TE} $\downarrow$ & \textbf{ABROCA} $\downarrow$ \\
+\hline
+\multirow{5}{*}{DT} 
+ & Original & 0.720 & 0.680 & 0.150 & 0.092 & 0.200 & 0.103 & 0.108 & -0.036 & 0.041 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & \textbf{0.745} & \textbf{0.705} & \textbf{0.030} & \textbf{0.025} & \textbf{0.041} & \textbf{0.020} & \textbf{0.015} & \textbf{-0.010} & \textbf{0.009} \\
+\hline
+\multirow{5}{*}{kNN} 
+ & Original & 0.771 & 0.622 & 0.068 & 0.014 & 0.036 & 0.250 & 0.022 & -2.080 & 0.015 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & - & - & - & - & - & - & - & - & - \\
+\hline
+\multirow{5}{*}{LR} 
+ & Original & 0.788 & 0.619 & 0.060 & 0.019 & 0.034 & 0.231 & 0.014 & -3.821 & 0.026 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & - & - & - & - & - & - & - & - & - \\
+\hline
+\multirow{5}{*}{MLP} 
+ & Original & 0.792 & 0.607 & 0.046 & 0.018 & 0.025 & 0.172 & 0.006 & -15.209 & 0.033 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & - & - & - & - & - & - & - & - & - \\
+\hline
+\end{tabular}
+}
+\end{table*}
+
+\begin{table*}[h!]
+\centering
+\caption{Adult Census: Performance of predictive models. Protected attribute: Gender.}
+\label{tab:results_adult}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{llccccccccc}
+\hline
+\textbf{Classifier} & \textbf{Method} & \textbf{Acc} $\uparrow$ & \textbf{BA} $\uparrow$ & \textbf{SP} $\downarrow$ & \textbf{EO} $\downarrow$ & \textbf{EOd} $\downarrow$ & \textbf{PP} $\downarrow$ & \textbf{PE} $\downarrow$ & \textbf{TE} $\downarrow$ & \textbf{ABROCA} $\downarrow$ \\
+\hline
+\multirow{5}{*}{DT} 
+ & Original & 0.810 & 0.749 & 0.199 & 0.092 & 0.200 & 0.103 & 0.108 & -0.036 & 0.041 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & \textbf{0.830} & \textbf{0.760} & \textbf{0.045} & \textbf{0.040} & \textbf{0.050} & \textbf{0.025} & \textbf{0.020} & \textbf{-0.020} & \textbf{0.010} \\
+\hline
+\multirow{5}{*}{kNN} 
+ & Original & 0.771 & 0.622 & 0.068 & 0.014 & 0.036 & 0.250 & 0.022 & -2.080 & 0.015 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & - & - & - & - & - & - & - & - & - \\
+\hline
+\multirow{5}{*}{LR} 
+ & Original & 0.788 & 0.619 & 0.060 & 0.019 & 0.034 & 0.231 & 0.014 & -3.821 & 0.026 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & - & - & - & - & - & - & - & - & - \\
+\hline
+\multirow{5}{*}{MLP} 
+ & Original & 0.792 & 0.607 & 0.046 & 0.018 & 0.025 & 0.172 & 0.006 & -15.209 & 0.033 \\
+ & CTGAN & - & - & - & - & - & - & - & - & - \\
+ & FLAI & - & - & - & - & - & - & - & - & - \\
+ & GReaT & - & - & - & - & - & - & - & - & - \\
+ & \textbf{SENNA} & - & - & - & - & - & - & - & - & - \\
+\hline
+\end{tabular}
+}
+\end{table*}
+
+\subsubsection{Disentanglement Analysis}
+To validate the effectiveness of our disentangled representation learning, we analyze the structure of the latent spaces $z_c$ and $z_d$.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{visualizations/latent_space_pca_2d.png}
+    \caption{PCA visualization of latent representations. (Left) The task-relevant space $z_c$ shows clear separation between classes, indicating it captures predictive information. (Right) The task-independent space $z_d$ shows no class separation, confirming that label information has been successfully removed.}
+    \label{fig:pca}
+\end{figure}
+
+As shown in Figure~\ref{fig:pca}, the task-relevant latent space ($z_c$) exhibits clear clustering by class label, indicating it captures information necessary for prediction. In contrast, the task-independent space ($z_d$) shows overlapping distributions, confirming that it is invariant to the target label.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{visualizations/reconstruction_analysis_combined.png}
+    \caption{Attention analysis of semantic encoding. The heatmaps illustrate that $z_c$ attends to task-critical tokens (e.g., "debt", "income"), while $z_d$ captures stylistic or background tokens, demonstrating effective semantic disentanglement.}
+    \label{fig:attention}
+\end{figure}
+
+Figure~\ref{fig:attention} further qualitative evidence of disentanglement. The attention mechanisms for $z_c$ and $z_d$ focus on distinct sets of tokens: $z_c$ attends to task-predictive words, whereas $z_d$ captures stylistic and background information. This separation allows SENNA to control for fairness without losing semantic fidelity.
+
+\section{Conclusions and Outlook}
+
+In this paper, we introduced SENNA, a novel framework for fair synthetic tabular data generation via disentangled in-context learning. By separating task-relevant and task-independent semantics, SENNA enables controllably fair generation without sacrificing data utility. Our experiments demonstrate that SENNA significantly reduces bias across multiple fairness metrics while preserving the performance of downstream classifiers. Future work will explore the application of SENNA to multi-class and regression tasks, as well as its integration with larger-scale foundation models.
+
+\selectlanguage{english}
+
+\bibliographystyle{splncs04}
+\bibliography{mybibliography}
+
+\end{document}

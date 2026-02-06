@@ -28,7 +28,7 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
     
     Architecture:
     - 1 shared BERT encoder (bert-base-uncased)
-    - 2 separate heads: ContentHead (→ z_c) and DemographicHead (→ z_d)
+    - 2 separate heads: ContentHead (→ z_c) and DemographicHead (→ z_d) [Note: z_d represents task-independent features]
     - Each head uses attention pooling + VAE bottleneck (for compression only)
     - 2 separate decoders: D_c(z_c) and D_d(z_d) for additive reconstruction
     
@@ -231,8 +231,8 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                 attention_mask = batch['attention_mask'].to(device, non_blocking=True)
                 labels_batch = batch['label'].to(device, non_blocking=True)
                 
-                # === MAIN TRAINING STEP (LIRD Framework) ===
-                # LIRD uses HSIC instead of adversarial training:
+                # === MAIN TRAINING STEP (SENNA Framework) ===
+                # SENNA uses HSIC instead of adversarial training:
                 # - HSIC(z_c, z_d): Ensures z_c and z_d are statistically independent
                 # - HSIC(z_d, y): Ensures z_d is independent of task label y
                 # No need for adversarial classifier training with GRL
@@ -241,7 +241,7 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
                 # Forward pass
                 output = model(input_ids, attention_mask)
                 
-                # ============ LIRD LOSS COMPONENTS ============
+                # ============ SENNA LOSS COMPONENTS ============
                 # 1. L_task: z_c → y (MINIMIZE) - sufficiency (z_c is minimal sufficient for y)
                 loss_task = nn.functional.cross_entropy(
                     output['logits_y_from_z_c'], 
@@ -424,7 +424,7 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
         per_class_acc_z_d_str = f"PerCls: {history['per_class_acc_z_d'][-1]:.3f}" if len(history['per_class_acc_z_d']) > 0 else ""
         per_class_acc_z_c_str = f"PerCls: {history['per_class_acc_z_c'][-1]:.3f}" if len(history['per_class_acc_z_c']) > 0 else ""
         
-        # Print detailed epoch info (LIRD losses)
+        # Print detailed epoch info (SENNA losses)
         print(f"\nEpoch {epoch:3d}/{num_epochs}")
         print(f"  Losses: L_task={history['loss_task'][-1]:.4f} | L_adv (Unif)={history['loss_adv'][-1]:.4f} | L_ind={history['loss_ortho'][-1]:.4f} | L_rec={history['loss_rec'][-1]:.4f}")
         print(f"  Regularization: L_kl={history['loss_kl'][-1]:.4f} | L_var={history['loss_var'][-1]:.4f} | Total L_enc={avg_loss_enc:.4f}")
@@ -463,7 +463,7 @@ def train_cd_model(sentences, labels, num_epochs=50, batch_size=8, lambda_task=1
     per_class_acc_z_d_final = history['per_class_acc_z_d'][-1] if len(history['per_class_acc_z_d']) > 0 else 0.0
     per_class_acc_z_c_final = history['per_class_acc_z_c'][-1] if len(history['per_class_acc_z_c']) > 0 else 0.0
     
-    print(f"\nLIRD OBJECTIVES - Final Results:")
+    print(f"\nSENNA OBJECTIVES - Final Results:")
     print(f"  1. L_task (z_c → y): Acc={history['acc_task_from_z_c'][-1]:.3f} (target: ~1.0) - sufficiency")
     print(f"  2. L_y (HSIC(z_d, y)): {history['loss_adv'][-1]:.4f} (target: ~0) - label-independence")
     print(f"     Acc(z_d → y): {history['acc_task_from_z_d'][-1]:.3f} (target: {random_target_str})")

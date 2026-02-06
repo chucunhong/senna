@@ -6,12 +6,12 @@
   "clusters": {
     "0": {
       "cluster_id": 0,
-      "cluster_size": 107,
+      "cluster_size": 154,
       "n_sampled": 20
     },
     "1": {
       "cluster_id": 1,
-      "cluster_size": 193,
+      "cluster_size": 146,
       "n_sampled": 20
     }
   }

@@ -257,7 +257,7 @@ def visualize_reconstruction_and_attention(
         cbar=True, vmin=0, vmax=max_attn_d,
         annot_kws={'size': 8}
     )
-    ax.set_title(f'Non-Task Relevant (z_d) Attention (Max: {max_attn_d:.3f})', fontsize=13, fontweight='bold')
+    ax.set_title(f'Task-Independent (z_d) Attention (Max: {max_attn_d:.3f})', fontsize=13, fontweight='bold')
     ax.set_xlabel('Tokens', fontsize=11)
     ax.tick_params(axis='x', rotation=45, labelsize=8)
     ax.set_xlabel('Tokens (Filtered for Meaning)', fontsize=11)
@@ -285,7 +285,7 @@ def visualize_reconstruction_and_attention(
     
     ATTENTION ANALYSIS:
     Task-Relevant (z_c) focuses on: {top_c_token} (weight: {np.max(attn_c_vals):.3f})
-    Non-Task Relevant (z_d) focuses on: {top_d_token} (weight: {np.max(attn_d_vals):.3f})
+    Task-Independent (z_d) focuses on: {top_d_token} (weight: {np.max(attn_d_vals):.3f})
     
     LATENT SPACE:
     z_c variance: {z_c.std().item():.4f}
@@ -331,7 +331,7 @@ def visualize_reconstruction_and_attention(
         ax=ax_d, cbar_kws={'label': 'Attention Weight'}, 
         cbar=True, vmin=0, vmax=max(attn_d_vals_filtered) if len(attn_d_vals_filtered) > 0 else 1
     )
-    ax_d.set_title(f'Non-Task Relevant (z_d) Attention - Sentence: {sentence[:60]}...', 
+    ax_d.set_title(f'Task-Independent (z_d) Attention - Sentence: {sentence[:60]}...', 
                    fontsize=12, fontweight='bold', pad=10)
     ax_d.set_xlabel('Tokens', fontsize=11)
     plt.tight_layout()
@@ -669,7 +669,7 @@ def visualize_attention_heatmap_batch(model, dataloader, num_samples=50, save_di
                     annot=False,
                     cbar=True
                 )
-                ax_d.set_title('Non-Task Relevant (z_d) Attention', fontsize=12, fontweight='bold', pad=8)
+                ax_d.set_title('Task-Independent (z_d) Attention', fontsize=12, fontweight='bold', pad=8)
                 ax_d.set_xlabel('Tokens', fontsize=10)
                 plt.setp(ax_d.get_xticklabels(), rotation=45, ha='right', fontsize=9)
                 
@@ -776,7 +776,7 @@ def visualize_latent_space_pca(model, dataloader, num_samples=None, save_dir="vi
                             c='red', alpha=0.6, s=50, label='Label 1')
     ax.set_xlabel(f'PC1 ({pca_d.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_d.explained_variance_ratio_[1]:.2%})', fontsize=12)
-    ax.set_title('Non-Task Relevant (z_d) - PCA 2D Projection', fontsize=13, fontweight='bold')
+    ax.set_title('Task-Independent (z_d) - PCA 2D Projection', fontsize=13, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(alpha=0.3)
 

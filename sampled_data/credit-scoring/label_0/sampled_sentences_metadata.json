@@ -1,0 +1,18 @@
+{
+  "n_clusters": 2,
+  "total_samples": 696,
+  "sampled_samples": 200,
+  "label_group": 0,
+  "clusters": {
+    "0": {
+      "cluster_id": 0,
+      "cluster_size": 254,
+      "n_sampled": 100
+    },
+    "1": {
+      "cluster_id": 1,
+      "cluster_size": 442,
+      "n_sampled": 100
+    }
+  }
+}

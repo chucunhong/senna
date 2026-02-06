@@ -23,7 +23,7 @@ User instructions:
 In-context data:
 {icl_examples}
 
-Produce your output as a single JSON object containing {n_samples} entries. Do not include any explanatory text, commentary, or extra fields. The JSON must be directly parseable.
+Produce your output as a single JSON object containing {n_samples} entries. Do not include any explanatory text, commentary, or extra fields. The JSON must be directly parseable. Output ONLY valid JSON, no markdown formatting or code blocks.
 The template of each entry (6 sentences, covering all 21 fields):
     A {{age}}-year-old {{sex}} applicant with {{marital-status}} status works as {{job}}. The applicant requests {{credit-amount}} DM for {{purpose}} over {{duration}} months, with checking account status {{checking-account}} and savings of {{savings-account}}. The applicant has credit history {{credit-history}}, employed for {{employment-since}}, with {{installment-rate}} installment rate and {{other-debtors}} other debtors. The applicant has lived at current residence for {{residence-since}} years, owns {{property}} as property, has {{other-installment}} other installment plans, {{housing}} housing, and {{existing-credits}} existing credits at this bank. The applicant supports {{number-people-provide-maintenance-for}} dependent, {{telephone}} telephone, and is {{foreign-worker}} foreign worker. The credit decision is {{class-label}}.
     with: 

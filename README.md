@@ -21,7 +21,7 @@ SENNA tackles the challenge of generating fair synthetic data for tabular datase
 The framework uses a shared BERT encoder with two separate attention heads:
 
 - **z_c (Task-Relevant Space)**: Captures information needed to predict the label (high accuracy ~85-95%)
-- **z_d (Non-Task Relevant Space)**: Captures information independent of the label (accuracy ~50%, random guess)
+- **z_d (Task-Independent Space)**: Captures information independent of the label (accuracy ~50%, random guess)
 
 ```
 Input Text (sentence)
@@ -47,7 +47,7 @@ Shared BERT Output [batch_size, seq_len, 768]
 
 1. **Shared BERT Encoder**: Encodes input text into embeddings
 2. **ContentHead**: Attention pooling + VAE → `z_c` (task-relevant information)
-3. **DemographicHead**: Attention pooling + VAE → `z_d` (non-task relevant information)
+3. **DemographicHead**: Attention pooling + VAE → `z_d` (task-independent information)
 4. **Task Classifier**: Predicts label from `z_c` (target: high accuracy)
 5. **Adversarial Classifier**: Predicts label from `z_d` (target: ~50% accuracy)
 6. **Decoders**: `D_c(z_c)` and `D_d(z_d)` for reconstruction
@@ -171,7 +171,7 @@ python scripts/generate.py \
 - All examples in CSV are used as in-context examples (shuffled)
 - Clustering ensures diversity in ICL examples
 
-### Step 5: Generate with Fairness Constraints
+ Generate with Fairness Constraints
 
 ```bash
 python scripts/generate.py \
@@ -180,6 +180,7 @@ python scripts/generate.py \
     --n-examples 1000 \
     --fair \
     --sensitive-attrs sex
+    --visualization
 ```
 
 **Fairness Features**:
@@ -242,7 +243,7 @@ python scripts/generate.py \
 
 ### Disentanglement Quality
 - **Task Accuracy (z_c → y)**: ~85-95% (Task-Relevant captures predictive info)
-- **Adversarial Accuracy (z_d → y)**: ~45-55% (Non-Task Relevant is independent)
+- **Adversarial Accuracy (z_d → y)**: ~45-55% (Task-Independent is independent)
 - **HSIC(z_d, y) & HSIC(z_c, z_d)**: < 0.01 (Statistical independence)
 
 ### Fairness Metrics

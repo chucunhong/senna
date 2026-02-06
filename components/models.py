@@ -266,7 +266,7 @@ class ContentHead(nn.Module):
 
 class DemographicHead(nn.Module):
     """
-    Head to extract z_d (Demographic) from shared BERT encoder.
+    Head to extract z_d (Task-Independent) from shared BERT encoder.
     Uses different attention pooling + VAE bottleneck to compress to smaller latent space.
     VAE is used for compression and regularization, not generation.
     """
@@ -275,7 +275,7 @@ class DemographicHead(nn.Module):
         self.d_model = d_model
         self.latent_dim = latent_dim
         
-        # Attention pooling: learn which tokens are important for demographic
+        # Attention pooling: learn which tokens are important for task-independent representation
         self.attention_pool = nn.Sequential(
             nn.Linear(d_model, 256),
             nn.Tanh(),
@@ -374,7 +374,7 @@ class CD_Model(nn.Module):
     
     def forward(self, input_ids, attention_mask, bert_embeddings=None):
         """
-        Forward pass with shared BERT encoder + 2 separate heads (LIRD framework).
+        Forward pass with shared BERT encoder + 2 separate heads (SENNA framework).
         
         Uses HSIC for independence constraints (no GRL/adversarial training).
         

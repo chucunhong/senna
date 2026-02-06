@@ -190,7 +190,7 @@ def embed_data(model, sentences, tokenizer, max_len=50, batch_size=32, use_cache
     
     Returns:
         z_c: numpy array of shape [n_samples, latent_dim] - Content representations
-        z_d: numpy array of shape [n_samples, latent_dim] - Demographic representations
+        z_d: numpy array of shape [n_samples, latent_dim] - Task-Independent representations
         attn_c: numpy array of shape [n_samples, seq_len] - Attention weights for z_c
         attn_d: numpy array of shape [n_samples, seq_len] - Attention weights for z_d
     """
@@ -261,7 +261,7 @@ def save_embeddings(z_c, z_d, sentences, labels=None, output_dir="embeddings", f
     
     Args:
         z_c: Content representations [n_samples, latent_dim]
-        z_d: Demographic representations [n_samples, latent_dim]
+        z_d: Task-Independent representations [n_samples, latent_dim]
         sentences: Original sentences
         labels: Optional labels (for reference)
         output_dir: Directory to save embeddings
@@ -408,7 +408,7 @@ def main():
     print(f"{'='*70}")
     print(f"\nOutput files saved to: {args.output_dir}/")
     print(f"  - {args.output_name}_z_c.npy (Content representations)")
-    print(f"  - {args.output_name}_z_d.npy (Demographic representations)")
+    print(f"  - {args.output_name}_z_d.npy (Task-Independent representations)")
     print(f"  - {args.output_name}.csv (CSV with sentences and embeddings)")
     print(f"  - {args.output_name}_summary.json (Summary statistics)")
     print(f"\nYou can now use z_c and z_d for:")

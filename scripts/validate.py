@@ -9,7 +9,7 @@ For each generated sample:
 
 import torch
 import numpy as np
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from transformers import AutoTokenizer
 import os
 import sys
@@ -74,13 +74,14 @@ def validate_counterfactual_fairness(
         return True # Could not flip, skip check
         
     # Extract z_c for flipped sentence
-    from validate_synthetic_data import split_sentence_into_main_and_label, extract_z_c_z_d
-    main_part, _ = split_sentence_into_main_and_label(flipped_sentence, dataset_name)
+    # Functions are in the same module, so no need to import
+    # using split_sentence_into_main_and_label and extract_z_c_z_d directly
     
+    main_part, _ = split_sentence_into_main_and_label(flipped_sentence, dataset_name)
     z_c_flipped, _ = extract_z_c_z_d(model, [main_part], tokenizer, batch_size=1, dataset_name=None)
     
     # Validate flipped sample
-    from validate_synthetic_data import validate_sample
+
     _, majority_label_flipped, _ = validate_sample(
         z_c_flipped[0], z_c_original, original_labels, k=k, majority_threshold=majority_threshold
     )
@@ -250,6 +251,22 @@ def split_sentence_into_main_and_label(sentence: str, dataset_name: str) -> Tupl
             main_sentence = match.group(1).strip()
             label_sentence = match.group(2).strip()
             return main_sentence, label_sentence
+    elif dataset_name == 'credit-scoring':
+        # Pattern: "The credit application decision is ..."
+        pattern = r'(.*?)(\s*The credit application decision is.*$)'
+        match = re.search(pattern, sentence, re.IGNORECASE | re.DOTALL)
+        if match:
+            main_sentence = match.group(1).strip()
+            label_sentence = match.group(2).strip()
+            return main_sentence, label_sentence
+        
+        # Fallback for old "score is" format
+        pattern_old = r'(.*?)(\s*The credit score is.*$)'
+        match_old = re.search(pattern_old, sentence, re.IGNORECASE | re.DOTALL)
+        if match_old:
+            main_sentence = match_old.group(1).strip()
+            label_sentence = match_old.group(2).strip()
+            return main_sentence, label_sentence
     
     # If no label sentence found, return full sentence as main
     return sentence.strip(), ""
@@ -307,12 +324,20 @@ def extract_label_from_label_sentence(label_sentence: str, dataset_name: str) ->
     
     elif dataset_name == 'credit-scoring':
         # Format: "The credit application decision is [approved/rejected]."
-        if 'approved' in label_sentence_lower:
-            return 0  # 0 = approved (good)
-        elif 'rejected' in label_sentence_lower:
-            return 1  # 1 = rejected (bad)
+        # 0 = approved, 1 = rejected (Mapping based on user input / dataset convention)
+        if 'decision is approved' in label_sentence_lower:
+            return 0
+        elif 'decision is rejected' in label_sentence_lower:
+            return 1
+        
+        # Fallback for "score is 0/1"
+        if 'score is 1' in label_sentence_lower or label_sentence.strip().endswith(' 1') or label_sentence.strip().endswith(' 1.'):
+            return 1
+        elif 'score is 0' in label_sentence_lower or label_sentence.strip().endswith(' 0') or label_sentence.strip().endswith(' 0.'):
+            return 0
+        
         # Also check numeric
-        match = re.search(r'decision\s+is\s+(\d+)', label_sentence_lower)
+        match = re.search(r'score\s+is\s+(\d+)', label_sentence_lower)
         if match:
             return int(match.group(1))
     
@@ -408,10 +433,9 @@ def remove_label_description_from_sentence(sentence: str, dataset_name: str) -> 
         sentence = re.sub(r'\s*(subscribed|not\s+subscribed)\.?\s*$', '', sentence, flags=re.IGNORECASE)
     
     elif dataset_name == 'credit-scoring':
-        # Remove patterns like "The credit decision is ..."
-        pattern = r'\s*The credit decision is.*$'
-        sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
-        sentence = re.sub(r'\s*(approved|rejected)\.?\s*$', '', sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+decision\s+is\s+(approved|rejected)\.?$', '', sentence, flags=re.IGNORECASE).strip()
+        # Fallback for old "score is" format
+        sentence = re.sub(r'\s*The credit score is\s*\d+\.?\s*$', '', sentence, flags=re.IGNORECASE)
     
     elif dataset_name == 'dutch-census':
         # Remove patterns like "The occupation classification is ..."
@@ -1239,7 +1263,7 @@ def visualize_synthetic_data_pca(
 
     ax.set_xlabel(f'PC1 ({pca_d.explained_variance_ratio_[0]:.2%})', fontsize=12)
     ax.set_ylabel(f'PC2 ({pca_d.explained_variance_ratio_[1]:.2%})', fontsize=12)
-    title = f'Non-Task Relevant (z_d) - PCA 2D Projection'
+    title = f'Task-Independent (z_d) - PCA 2D Projection'
     if compare_with_original:
         title += f' (Synthetic vs Original)\n{len(z_d_synthetic)} synthetic samples shown'
     else:
@@ -1249,9 +1273,48 @@ def visualize_synthetic_data_pca(
     ax.grid(alpha=0.3)
     
     plt.tight_layout()
-    filename = os.path.join(save_dir, "synthetic_data_pca_2d.png")
-    plt.savefig(filename, dpi=150, bbox_inches='tight')
-    print(f"\n✓ Saved PCA visualization to {filename}")
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+        print(f"✓ Saved PCA visualization to: {save_path}")
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+
+def filter_valid_samples(batch_data: List[Dict], validation_results: Dict) -> List[Dict]:
+    """
+    Filter batch data to keep only valid samples based on validation results.
+    Also updates the 'label' and 'class-label' fields with the validated label.
+    
+    Args:
+        batch_data: List of dictionaries containing sample data
+        validation_results: Dictionary returned by validate_synthetic_data or validate_batch_with_assets
+    
+    Returns:
+        List of valid sample dictionaries
+    """
+    valid_indices = set(validation_results['valid_indices'])
+    valid_data = []
+    
+    for i, entry in enumerate(batch_data):
+        if i in valid_indices:
+            # Get the validated details for this index
+            detail = next((d for d in validation_results['validation_details'] if d['index'] == i), None)
+            
+            # Create a copy to avoid mutating original list if needed
+            new_entry = entry.copy()
+            
+            # Update label if available from validation
+            if detail and detail.get('extracted_label') is not None:
+                validated_label = str(detail['extracted_label'])
+                new_entry['label'] = validated_label
+                new_entry['class-label'] = validated_label
+            
+            valid_data.append(new_entry)
+            
+    return valid_data
     plt.close()
     
     print(f"{'='*70}\n")

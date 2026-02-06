@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Fairness learning with disentangled representations from Natural Language (LIRD framework).
+Fairness learning with disentangled representations from Natural Language (SENNA framework).
 
 Architecture:
 1. Shared BERT encoder + 2 separate heads (Content head & Demographic head)
 2. Attention pooling in heads to extract z_c and z_d from shared BERT output
 3. Separate decoders: D_c(z_c) and D_d(z_d) for additive reconstruction
 
-LIRD Objectives (HSIC-based, no adversarial training):
+SENNA Objectives (HSIC-based, no adversarial training):
 - L_task: z_c → y (high accuracy) - z_c contains task-relevant info
 - L_y: HSIC(z_d, y) (minimize) - z_d is independent of task label y
 - L_ind: HSIC(z_c, z_d) (minimize) - z_c and z_d are statistically independent
@@ -16,7 +16,7 @@ LIRD Objectives (HSIC-based, no adversarial training):
 
 Key Objectives:
 - z_c (Content): Can predict y well (high accuracy)
-- z_d (Demographic): Cannot predict y (accuracy ~50/50, random guess), but carries input information
+- z_d (Task-Independent): Cannot predict y (accuracy ~50/50, random guess), but carries input information
 - z_c ⊥ z_d: Statistically independent (HSIC ≈ 0)
 - D_c(z_c) + D_d(z_d) → h: Can reconstruct original representation
 - Attention visualization: See which tokens each head focuses on
@@ -68,7 +68,7 @@ if torch.cuda.is_available():
 # ============== MAIN ==============
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Train improved fairness model with attention, MI minimization, and orthogonal constraints"
+        description="Train SENNA model with attention, MI minimization, and orthogonal constraints"
     )
     parser.add_argument(
         "--dataset",
@@ -110,7 +110,7 @@ if __name__ == "__main__":
         "--lambda-adv",
         type=float,
         default=1.0,
-        help="HSIC(z_d, y) weight for label-independence (default: 1.0, LIRD framework)"
+        help="HSIC(z_d, y) weight for label-independence (default: 1.0, SENNA framework)"
     )
     parser.add_argument(
         "--lambda-rec",

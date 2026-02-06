@@ -23,6 +23,8 @@ import threading
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import concurrent.futures
+import random
+import time
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,9 +57,35 @@ class FairnessGovernor:
     def update(self, entries: List[Dict]):
         """Update counts with new valid samples."""
         for entry in entries:
+            # Stricter check for fairness counting: 
+            # We only count samples that have non-unknown sensitive attributes
+            # and a valid label (0 or 1).
+            label = str(entry.get('class-label', entry.get('label', 'unknown'))).lower()
+            if label not in ['0', '1']:
+                 continue
+            # Check all sensitive attributes
+            valid_sensitive = True
+            for attr in self.sensitive_attrs:
+                # Check for attr, lower(attr), or Capitalized(attr)
+                val = entry.get(attr, entry.get(attr.lower(), entry.get(attr.capitalize(), '')))
+                if str(val).lower() in ['', 'unknown', 'none', 'null', 'nan']:
+                    valid_sensitive = False
+                    break
+            
+            if not valid_sensitive:
+                continue
+
             key = self.get_group_key(entry)
             self.counts[key] = self.counts.get(key, 0) + 1
             self.samples.append(entry)
+            
+        # Optional: Print why some were rejected if none are valid
+        if not self.counts and entries:
+            last_entry = entries[-1]
+            l = str(last_entry.get('class-label', last_entry.get('label', 'unknown')))
+            # Check lowercase and capitalized keys for debug
+            g = str(last_entry.get('gender', last_entry.get('sex', last_entry.get('Sex', 'unknown'))))
+            print(f"  [DEBUG] Fairness rejection example: label='{l}', gender/sex='{g}'")
     
     def get_shortfall_report(self) -> str:
         """Returns a string describing current distribution."""
@@ -71,6 +99,8 @@ class FairnessGovernor:
         report = "Group distribution (Label + Sensitive):"
         sorted_keys = sorted(self.counts.keys())
         for key in sorted_keys:
+            if 'label:None' in key or 'label:unknown' in key:
+                continue
             report += f"\n    - {key}: {self.counts[key]}"
         return report
 
@@ -105,15 +135,26 @@ class FairnessGovernor:
             subgroup_counts = {}
             for s in group_data:
                 attr_vals = tuple(str(s.get(attr, "unknown")).lower().strip() for attr in self.sensitive_attrs)
+                # Skip unknown values for stopping condition
+                if any(v in ['unknown', 'none', 'null', 'nan'] for v in attr_vals):
+                    continue
                 subgroup_counts[attr_vals] = subgroup_counts.get(attr_vals, 0) + 1
             
             # For German Credit, we expect at least 2 subgroups (e.g. male, female)
-            n_subgroups = max(2, len(subgroup_counts)) 
-            min_per_subgroup = label_target // n_subgroups
+            # If we don't have valid subgroups yet, keep going
+            if not subgroup_counts:
+                 return False
+
+            n_subgroups_found = len(subgroup_counts)
+            # We enforce at least 2 groups if possible, or just what we found
+            n_div = max(2, n_subgroups_found)
+            min_per_subgroup = label_target // n_div
             
-            # If any subgroup is missing or significantly low, keep going
-            if len(subgroup_counts) < n_subgroups:
-                return False
+            # If we haven't found at least 2 diverse groups yet (e.g. only male), keep going
+            # Unless the dataset inherently only has 1 group? No, assuming we want fairness.
+            # But let's be careful not to infinite loop if only 1 group exists in data.
+            # For now, let's stick to the user's implicit "balanced" requirement which implies >1.
+            pass 
 
             for count in subgroup_counts.values():
                 if count < min_per_subgroup: # No margin, we need full count for perfect balance
@@ -122,6 +163,66 @@ class FairnessGovernor:
             return True
 
         return check_subgroups(data_0, target_per_label) and check_subgroups(data_1, target_per_label)
+
+    def get_most_needed_subgroup_instruction(self) -> str:
+        """
+        Identify all subgroups with shortfalls and return a combined priority instruction.
+        """
+        if not self.sensitive_attrs:
+            return "" 
+            
+        target_per_subgroup = self.target_count // 4 
+        
+        seen_values = {}
+        for attr in self.sensitive_attrs:
+            seen_values[attr] = set()
+            
+        for s in self.samples:
+             for attr in self.sensitive_attrs:
+                 val = str(s.get(attr, "unknown")).lower().strip()
+                 if val not in ['unknown', 'none', 'null', 'nan', '']:
+                     seen_values[attr].add(val)
+                     
+        if not all(seen_values.values()):
+             # If we haven't seen any legitimate values yet, we can't target specifically.
+             return ""
+
+        import itertools
+        labels = ['0', '1']
+        attr_names = self.sensitive_attrs
+        attr_val_lists = [list(seen_values[a]) for a in attr_names]
+        
+        priority_groups = []
+        
+        for label in labels:
+            for combo in itertools.product(*attr_val_lists):
+                key_parts = [f"label:{label}"]
+                for i, val in enumerate(combo):
+                    key_parts.append(f"{attr_names[i]}:{val}")
+                
+                key = ",".join(key_parts)
+                count = self.counts.get(key, 0)
+                
+                if count < target_per_subgroup:
+                    # Construct nice description
+                    lbl_desc = f"Label {label}"
+                    if self.dataset_name == 'adult':
+                         lbl_desc = "Income >50K" if label == '1' else "Income <=50K"
+                    elif self.dataset_name == 'german-credit-data':
+                         lbl_desc = "Good Credit Risk" if label == '1' else "Bad Credit Risk"
+                    
+                    attr_desc = ", ".join([f"{attr_names[i]}='{val.capitalize()}'" for i, val in enumerate(combo)])
+                    priority_groups.append(f"[{lbl_desc} with {attr_desc}]")
+
+        if priority_groups:
+             # Limit to a few most needy if there are many to avoid prompt bloat
+             if len(priority_groups) > 3:
+                 priority_groups = priority_groups[:3]
+             
+             groups_str = ", ".join(priority_groups)
+             return f"Please prioritize generating samples for these specific subgroups to ensure balance: {groups_str}."
+        
+        return ""
 
     def print_distribution_table(self, samples_list: List[Dict] = None):
         """
@@ -282,22 +383,28 @@ def convert_to_original_csv_format(combined_data: List[Dict], dataset_name: str)
     
     return df
 
+# Try to import python-dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+    print("⚠ Warning: python-dotenv not found. Environment variables from .env will not be loaded.")
+
 # Try to import Google Generative AI SDK
 try:
     try:
         from google import genai
     except (ImportError, AttributeError):
         import google.genai as genai
-    from dotenv import load_dotenv
     GEMINI_AVAILABLE = True
 except Exception as e:
     GEMINI_AVAILABLE = False
-    print(f"⚠ Warning: google-genai or python-dotenv import failed: {e}")
-    print("Please ensure you have installed the correct package: pip install google-genai python-dotenv")
-
-# Load environment variables from .env file
-if GEMINI_AVAILABLE:
-    load_dotenv()
+    # Only warn if user intends to use Gemini (we can't know yet, but good to be silent if just using OpenRouter)
+    # But for now let's suppress the loud warning unless --provider is gemini? 
+    # actually getting the args later. 
+    pass
 
 
 def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 42, dataset_name: str = None, filter_dict: Dict = None, sensitive_attrs: List[str] = None) -> str:
@@ -460,10 +567,22 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
                 else:
                     label_desc = f"label {label}"
                 
-                # Ensure sentence ends with period before adding label description
                 if not sentence_clean.endswith('.'):
                     sentence_clean += '.'
                 sentence_clean += f" The income classification for this person is {label_desc}."
+            
+            
+            elif dataset_name == 'credit-scoring':
+                # Format: "The credit application decision is {label}."
+                # Label is 0 (approved) or 1 (rejected)
+                if label == 0 or str(label).strip() == '0':
+                    label_desc = "approved"
+                else:
+                    label_desc = "rejected"
+                
+                if not sentence_clean.endswith('.'):
+                    sentence_clean += '.'
+                sentence_clean += f" The credit application decision is {label_desc}."
         
         # Format as example
         examples.append(f"Example {i}: {sentence_clean}")
@@ -595,7 +714,7 @@ def save_label_data(csv_path: str, dataset_name: str, output_dir: str = None):
     return label_0_file, label_1_file
 
 
-def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2, fair: bool = False, fairness_instruction: str = "") -> tuple:
+def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2, fair: bool = False, fairness_instruction: str = "", sensitive_attrs: List[str] = None) -> tuple:
     """
     Format prompt with in-context examples for chat format.
     
@@ -605,6 +724,7 @@ def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2, fair
         n_samples: Number of samples to generate (for template formatting)
         fair: Whether to include fairness-specific instructions
         fairness_instruction: Additional targeted instruction from Governor
+        sensitive_attrs: List of sensitive attributes to balance (if fair=True)
     
     Returns:
         Tuple of (system_message, user_message) for chat format
@@ -634,6 +754,10 @@ def format_prompt(dataset_name: str, icl_examples: str, n_samples: int = 2, fair
             "\n    IMPORTANT: Ensure the generated decisions are fair and base decisions strictly on financial/merit criteria. "
             "Do not discriminate based on protected attributes like age, sex, or race."
         )
+        if sensitive_attrs:
+            attrs_str = ", ".join(sensitive_attrs)
+            fairness_instr += f"\n    Use a diverse set of values for the following sensitive attributes: {attrs_str}. Ensure the generated samples are approximately balanced across these attributes."
+            
         if fairness_instruction:
             fairness_instr += f"\n    TARGETED REQUEST: {fairness_instruction}"
             
@@ -797,8 +921,30 @@ def parse_generated_output(generated_text: str, dataset_name: str) -> List[Dict]
         
         for key in sorted_keys:
             value = parsed_json[key]
-            if isinstance(value, str):
-                # Extract sentence and label from the value
+            
+            if isinstance(value, dict):
+                # Handle structured JSON objects directly
+                # Ensure it has at least 'sentence' or enough features
+                sentence = value.get('sentence', '')
+                label = value.get('label', value.get('class-label'))
+                
+                # Create result from dictionary
+                result = {'json_key': str(key)}
+                # Copy all fields from the JSON object
+                for k, v in value.items():
+                    result[k] = v
+                
+                # Ensure label and sentence are set
+                if 'sentence' not in result and sentence:
+                    result['sentence'] = sentence
+                if 'label' not in result and label is not None:
+                    result['label'] = label
+                
+                if result.get('sentence'):
+                    results.append(result)
+                    
+            elif isinstance(value, str):
+                # Extract sentence and label from the value (legacy/string format)
                 sentence, label = extract_sentence_and_label(value, dataset_name)
                 if sentence:
                     results.append({
@@ -819,7 +965,8 @@ def parse_generated_output(generated_text: str, dataset_name: str) -> List[Dict]
     # Pattern: sentence ending with "good credit risk" or "bad credit risk"
     if dataset_name == 'german-credit-data':
         # Pattern: Full sentence ending with credit risk decision
-        credit_risk_pattern = r'([^\.]+(?:\.\s+[^\.]+)*\.\s+The\s+credit\s+application\s+has\s+been\s+evaluated\s+and\s+the\s+decision\s+is\s+(good|bad)\s+credit\s+risk\.)'
+        # Matches prompt: "The credit decision is {{class-label}}."
+        credit_risk_pattern = r'([^\.]+(?:\.\s+[^\.]+)*\.\s+The\s+credit\s+decision\s+is\s+(good|bad)\s+credit\s+risk\.)'
         matches = re.findall(credit_risk_pattern, generated_text, re.IGNORECASE | re.DOTALL)
         if matches:
             for match in matches:
@@ -827,7 +974,7 @@ def parse_generated_output(generated_text: str, dataset_name: str) -> List[Dict]
                 risk_type = match[1].lower()
                 label = 1 if risk_type == 'good' else 0 # 1=Good, 0=Bad
                 # Remove the label description to get clean sentence
-                sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+has\s+been\s+evaluated\s+and\s+the\s+decision\s+is\s+(good|bad)\s+credit\s+risk\.?', '', full_sentence, flags=re.IGNORECASE).strip()
+                sentence = re.sub(r'\.?\s*The\s+credit\s+decision\s+is\s+(good|bad)\s+credit\s+risk\.?', '', full_sentence, flags=re.IGNORECASE).strip()
                 if sentence:
                     results.append({
                         'sentence': sentence,
@@ -837,6 +984,36 @@ def parse_generated_output(generated_text: str, dataset_name: str) -> List[Dict]
             if results:
                 print(f"✓ Parsed {len(results)} samples from natural language (credit risk pattern)")
                 return results
+
+    elif dataset_name == 'adult':
+        # Pattern: sentence ending with income classification
+        # Matches prompt: "The income classification for this person is income {{class-label}}."
+        income_pattern = r'([^\.]+(?:\.\s+[^\.]+)*\.\s+The\s+income\s+classification\s+for\s+this\s+person\s+is\s+income\s*((?:<=|>)\s*50K)\.)'
+        matches = re.findall(income_pattern, generated_text, re.IGNORECASE | re.DOTALL)
+        if matches:
+            for match in matches:
+                full_sentence = match[0].strip()
+                income_str = match[1].strip() # <=50K or >50K
+                
+                # Check labels
+                label = None
+                if '<=50K' in income_str.replace(' ', ''):
+                     label = 0
+                elif '>50K' in income_str.replace(' ', ''):
+                     label = 1
+                
+                if label is not None:
+                     # Remove the label description to get clean sentence
+                     sentence = re.sub(r'\.?\s*The\s+income\s+classification\s+for\s+this\s+person\s+is\s+income\s*((?:<=|>)\s*50K)\.?', '', full_sentence, flags=re.IGNORECASE).strip()
+                     if sentence:
+                         results.append({
+                             'sentence': sentence,
+                             'label': label,
+                             'raw': full_sentence
+                         })
+            if results:
+                 print(f"✓ Parsed {len(results)} samples from natural language (adult income pattern)")
+                 return results
     
     # Try numeric label patterns
     patterns = [
@@ -873,7 +1050,7 @@ def parse_generated_output(generated_text: str, dataset_name: str) -> List[Dict]
             continue
         
         # Try to extract sentence and label
-        sentence, label = extract_sentence_and_label(line)
+        sentence, label = extract_sentence_and_label(line, dataset_name)
         if sentence:
             results.append({
                 'sentence': sentence,
@@ -915,20 +1092,41 @@ def extract_sentence_and_label(text: str, dataset_name: str = None) -> tuple:
         if re.search(r'good\s+credit\s+risk', sentence, re.IGNORECASE):
             label = 1  # 1 = good credit risk (Aligned with data_loader)
             # Remove the label description
-            sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+has\s+been\s+evaluated\s+and\s+the\s+decision\s+is\s+good\s+credit\s+risk\.?', '', sentence, flags=re.IGNORECASE).strip()
+            sentence = re.sub(r'\.?\s*The\s+credit\s+decision\s+is\s+good\s+credit\s+risk\.?', '', sentence, flags=re.IGNORECASE).strip()
         elif re.search(r'bad\s+credit\s+risk', sentence, re.IGNORECASE):
             label = 0  # 0 = bad credit risk (Aligned with data_loader)
             # Remove the label description
-            sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+has\s+been\s+evaluated\s+and\s+the\s+decision\s+is\s+bad\s+credit\s+risk\.?', '', sentence, flags=re.IGNORECASE).strip()
+            sentence = re.sub(r'\.?\s*The\s+credit\s+decision\s+is\s+bad\s+credit\s+risk\.?', '', sentence, flags=re.IGNORECASE).strip()
     
     elif dataset_name == 'adult':
         # Look for "income <=50K" or "income >50K"
-        if re.search(r'income\s*<=\s*50K', sentence, re.IGNORECASE):
+        if re.search(r'<=50K|<= 50K|<=50k|<= 50k', sentence, re.IGNORECASE):
             label = 0  # 0 = income <=50K
-            sentence = re.sub(r'\.?\s*The\s+income\s+classification\s+for\s+this\s+person\s+is\s+income\s*<=\s*50K\.?', '', sentence, flags=re.IGNORECASE).strip()
-        elif re.search(r'income\s*>\s*50K', sentence, re.IGNORECASE):
+            sentence = re.sub(r'\.?\s*The\s+income\s+classification.*?is\s+income\s*<=\s*50K\.?', '', sentence, flags=re.IGNORECASE).strip()
+        elif re.search(r'>50K|> 50K|>50k|> 50k', sentence, re.IGNORECASE):
             label = 1  # 1 = income >50K
-            sentence = re.sub(r'\.?\s*The\s+income\s+classification\s+for\s+this\s+person\s+is\s+income\s*>\s*50K\.?', '', sentence, flags=re.IGNORECASE).strip()
+            sentence = re.sub(r'\.?\s*The\s+income\s+classification.*?is\s+income\s*>\s*50K\.?', '', sentence, flags=re.IGNORECASE).strip()
+        # Fallback for just 0 or 1 if specifically prompted
+        elif re.search(r'classification\s+is\s+0', sentence, re.IGNORECASE):
+            label = 0
+        elif re.search(r'classification\s+is\s+1', sentence, re.IGNORECASE):
+            label = 1
+
+    elif dataset_name == 'credit-scoring':
+        # Look for "credit score is 0" or "credit score is 1"
+        if re.search(r'credit\s+score\s+is\s+0', sentence, re.IGNORECASE):
+            label = 0
+            sentence = re.sub(r'\.?\s*The\s+credit\s+score\s+is\s+0\.?', '', sentence, flags=re.IGNORECASE).strip()
+        elif re.search(r'credit\s+score\s+is\s+1', sentence, re.IGNORECASE):
+            label = 1
+            sentence = re.sub(r'\.?\s*The\s+credit\s+score\s+is\s+1\.?', '', sentence, flags=re.IGNORECASE).strip()
+        # Also check for simple suffix "0" or "1" if strict formatting
+        elif sentence.strip().endswith(' 0'):
+             label = 0
+             sentence = sentence[:-2].strip()
+        elif sentence.strip().endswith(' 1'):
+             label = 1
+             sentence = sentence[:-2].strip()
     
     # If not found, try numeric label patterns
     if label is None:
@@ -989,8 +1187,15 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
         sentence = result.get('sentence', '')
         label = result.get('label')
         
-        # Don't include 'sentence' in extracted_fields - we'll use raw sentence from result
-        extracted_fields = {'label': label}
+        # Initialize extracted_fields with any values already in result (from structured JSON)
+        # This prioritizes LLM's own structured output over regex extraction
+        extracted_fields = {}
+        for k, v in result.items():
+            if k not in ['raw', 'json_key', 'batch_id', 'raw_generated_text']:
+                extracted_fields[k] = v
+        
+        if 'label' not in extracted_fields or extracted_fields['label'] is None:
+            extracted_fields['label'] = label
         
         if dataset_name == 'german-credit-data':
             # Extract age - pattern: "A {age}-year-old"
@@ -1113,21 +1318,43 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
             # Map label to class-label (as in original CSV)
             if 'label' in extracted_fields:
                 extracted_fields['class-label'] = extracted_fields.pop('label')
+            
+            # Fallback label extraction if regex failed but extraction from field was missed (e.g. key 'label' missing)
+            if 'class-label' not in extracted_fields:
+                if 'good credit risk' in sentence.lower():
+                    extracted_fields['class-label'] = '1' # or 1, but we use string usually
+                elif 'bad credit risk' in sentence.lower():
+                    extracted_fields['class-label'] = '0'
+                
+                # Check for explicit integer mention if any "class-label: 1"
+                else:
+                    label_match = re.search(r'class-?label[:\s]+(0|1|good|bad)', sentence, re.IGNORECASE)
+                    if label_match:
+                        val = label_match.group(1).lower()
+                        if val == 'good': extracted_fields['class-label'] = '1'
+                        elif val == 'bad': extracted_fields['class-label'] = '0'
+                        else: extracted_fields['class-label'] = val
+            
+            # Debugging for label:None
+            if 'class-label' not in extracted_fields:
+                print(f"\n[DEBUG] Could not extract label from sentence:\n'{sentence}'\n")
         
         elif dataset_name == 'adult':
+            # print(f"[DEBUG] Processing Adult sample. Initial label: {extracted_fields.get('label')}, class-label: {extracted_fields.get('class-label')}")
             # Extract age - pattern: "A {age}-year-old"
             age_match = re.search(r'A\s+(\d+)-year-old', sentence, re.IGNORECASE)
             if age_match:
                 extracted_fields['age'] = int(age_match.group(1))
             
             # Extract gender - pattern: "{age}-year-old {gender} of"
-            if re.search(r'year-old\s+Male\s+of', sentence, re.IGNORECASE):
-                extracted_fields['gender'] = 'Male'
-            elif re.search(r'year-old\s+Female\s+of', sentence, re.IGNORECASE):
-                extracted_fields['gender'] = 'Female'
+            # Support both case variations and safer matching
+            gender_match = re.search(r'year-old\s+(Male|Female)\s+of', sentence, re.IGNORECASE)
+            if gender_match:
+                extracted_fields['gender'] = gender_match.group(1).capitalize() # Normalise to Male/Female
             
             # Extract race - pattern: "of {race} race"
-            race_match = re.search(r'of\s+([^,]+?)\s+race', sentence, re.IGNORECASE)
+            # Allow for potential hyphens or spaces
+            race_match = re.search(r'of\s+([a-zA-Z\-\s]+?)\s+race', sentence, re.IGNORECASE)
             if race_match:
                 extracted_fields['race'] = race_match.group(1).strip()
             
@@ -1187,9 +1414,39 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
             if fnlwgt_match:
                 extracted_fields['fnlwgt'] = int(fnlwgt_match.group(1))
             
-            # Map label to class-label
+            # Normalize class-label for Adult (Strict mapping to '0'/'1')
+            label_val = str(extracted_fields.get('class-label', extracted_fields.get('label', ''))).lower()
+            
+            # If label was None or unknown, try searching the sentence again (in case sub missed it)
+            if label_val in ['', 'none', 'unknown', 'null']:
+                if re.search(r'<=50K', sentence, re.IGNORECASE) or 'classification is 0' in sentence.lower():
+                    extracted_fields['class-label'] = '0'
+                elif re.search(r'>50K', sentence, re.IGNORECASE) or 'classification is 1' in sentence.lower():
+                    extracted_fields['class-label'] = '1'
+            else:
+                if 'income <=50k' in label_val or label_val == '0' or label_val == '0.0' or '<=50k' in label_val:
+                    extracted_fields['class-label'] = '0'
+                elif 'income >50k' in label_val or label_val == '1' or label_val == '1.0' or '>50k' in label_val:
+                    extracted_fields['class-label'] = '1'
+            
+            # Ensure it is a valid string '0' or '1'
+            final_label = extracted_fields.get('class-label')
+            if final_label not in ['0', '1']:
+                 # One last attempt: search for just "0" or "1" at the end of the sentence
+                 if sentence.strip().endswith(' 0'): extracted_fields['class-label'] = '0'
+                 elif sentence.strip().endswith(' 1'): extracted_fields['class-label'] = '1'
+            
+            # Clean up 'label' key to avoid confusion
             if 'label' in extracted_fields:
-                extracted_fields['class-label'] = extracted_fields.pop('label')
+                 extracted_fields.pop('label')
+                
+            # If still missing, check for explicit "class-label: <>" pattern common in some prompts
+            if 'class-label' not in extracted_fields:
+                 match = re.search(r'class-?label[:\s]*([<>]=?50K|0|1)', sentence, re.IGNORECASE)
+                 if match:
+                     val = match.group(1).upper()
+                     if '<=50K' in val or val == '0': extracted_fields['class-label'] = '0'
+                     elif '>50K' in val or val == '1': extracted_fields['class-label'] = '1'
         
         elif dataset_name == 'bank-marketing':
             # Extract age
@@ -1288,10 +1545,21 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
             # Extract sex code (mapped to text in generation, revert?)
             # Template: "{sex} with marital"
             # Value map: 1->male, 2->female. So "male" -> 1.
-            if re.search(r'year-old\s+male\s+with', sentence, re.IGNORECASE):
-                extracted_fields['Sex'] = 1
-            elif re.search(r'year-old\s+female\s+with', sentence, re.IGNORECASE):
-                extracted_fields['Sex'] = 2
+            # Robust extraction for sex
+            sex_val = None
+            if re.search(r'\b(male)\b', sentence, re.IGNORECASE):
+                sex_val = 1
+            elif re.search(r'\b(female)\b', sentence, re.IGNORECASE):
+                sex_val = 2
+            
+            if sex_val:
+                extracted_fields['Sex'] = sex_val
+            else:
+                 # Try to look in 'sex' or 'gender' keys if parsed from JSON
+                 if 'Sex' not in extracted_fields:
+                     s = str(extracted_fields.get('sex', extracted_fields.get('gender', ''))).lower()
+                     if 'male' in s: extracted_fields['Sex'] = 1
+                     elif 'female' in s: extracted_fields['Sex'] = 2
             
             # Extract marital status code - "marital status {marital}"
             marital_match = re.search(r'marital status\s+(\d+)', sentence, re.IGNORECASE)
@@ -1371,9 +1639,32 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
             elif 'phone changed is no' in sentence.lower():
                 extracted_fields['Changed-phone-number'] = 0
             
+            # Debug check for missing Sex
+            if 'Sex' not in extracted_fields:
+                 print(f"[DEBUG] Credit-Scoring: Could not extract Sex from: '{sentence}'")
+            
             # Map label to class-label
             if 'label' in extracted_fields:
                 extracted_fields['class-label'] = extracted_fields.pop('label')
+            
+            # Verify class-label is set
+            if 'class-label' not in extracted_fields or extracted_fields['class-label'] in [None, '', 'None', 'unknown', 'null']:
+                 # Try fallback extraction for label
+                 # Look for "The credit application decision is approved/rejected"
+                 # 0 = approved, 1 = rejected
+                 if re.search(r'decision\s+is\s+approved', sentence, re.IGNORECASE):
+                     extracted_fields['class-label'] = '0'
+                 elif re.search(r'decision\s+is\s+rejected', sentence, re.IGNORECASE):
+                     extracted_fields['class-label'] = '1'
+                 
+                 # Also keep "credit score is" just in case we have mixed history (optional, but safer to remove if strictly enforcing new template)
+                 # Let's support both for robustness if model hallucinates slightly
+                 elif re.search(r'credit\s+score\s+is\s+0', sentence, re.IGNORECASE) or sentence.strip().endswith(' 0'):
+                     extracted_fields['class-label'] = '0'
+                 elif re.search(r'credit\s+score\s+is\s+1', sentence, re.IGNORECASE) or sentence.strip().endswith(' 1'):
+                     extracted_fields['class-label'] = '1'
+                 
+                 pass
         
         elif dataset_name == 'dutch-census':
             # Extract age
@@ -1451,6 +1742,89 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
     return extracted
 
 
+def generate_with_openrouter(
+    system_message: str,
+    user_message: str, 
+    model: str, 
+    api_key: str, 
+    max_tokens: int = 8192,
+    temperature: float = 0.7,
+    top_p: float = 0.9,
+    base_url: str = "https://openrouter.ai/api/v1"
+) -> str:
+    """
+    Generate text using OpenRouter API (OpenAI-compatible).
+    """
+    import requests
+    import json
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": "https://github.com/google-deepmind/antigravity", # Optional
+        "X-Title": "Antigravity Agent", # Optional
+        "Content-Type": "application/json"
+    }
+    
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_message}
+    ]
+        
+    data = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "top_p": top_p,
+        "stream": False
+    }
+    
+    import time
+    import random
+    
+    max_retries = 3
+    base_delay = 2
+    
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.post(f"{base_url}/chat/completions", headers=headers, json=data, timeout=120)
+            response.raise_for_status()
+            
+            result = response.json()
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0]["message"]["content"]
+                print(f"[DEBUG] OpenRouter Response Length: {len(content) if content else 0}")
+                if not content:
+                     print(f"[DEBUG] WARNING: Empty content received! Full result: {result}")
+                return content
+            else:
+                raise ValueError(f"No choices in response: {result}")
+                
+        except Exception as e:
+            is_last_attempt = attempt == max_retries
+            
+            # Print error details
+            error_msg = str(e)
+            if isinstance(e, requests.exceptions.HTTPError):
+                # Try to extract error message from response
+                try:
+                    error_json = e.response.json()
+                    error_msg = json.dumps(error_json)
+                except:
+                    error_msg = e.response.text
+                print(f"❌ OpenRouter API Error (Attempt {attempt+1}/{max_retries+1}): {error_msg}")
+            else:
+                 print(f"❌ OpenRouter Connection Error (Attempt {attempt+1}/{max_retries+1}): {error_msg}")
+
+            if is_last_attempt:
+                raise e
+            
+            # Exponential backoff with jitter
+            delay = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
+            print(f"   Retrying in {delay:.2f} seconds...")
+            time.sleep(delay)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate synthetic data using Google Gemini API",
@@ -1513,7 +1887,14 @@ Note: Create a .env file in the project root with:
         "--model",
         type=str,
         default="gemini-3-pro-preview",
-        help="Model name (default: gemini-3-pro-preview). Examples: gemini-3-pro-preview, gemini-3-flash, gemini-1.5-pro, gemini-1.5-flash"
+        help="Model name (default: gemini-3-pro-preview). Examples: gemini-3-pro-preview, gemini-3-flash, gemini-1.5-pro, gemini-1.5-flash, google/gemini-2.0-flash-exp:free (OpenRouter)"
+    )
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default="gemini",
+        choices=["gemini", "openrouter"],
+        help="Model provider (default: gemini). Use 'openrouter' for OpenRouter API."
     )
     parser.add_argument(
         "--api-key",
@@ -1599,9 +1980,9 @@ Note: Create a .env file in the project root with:
     
     # Generate output directory and file names
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Create folder structure: synthetic_data/{model_name}/
+    # Create folder structure: synthetic_data/{dataset}/{model_name}/
     model_name_clean = args.model.replace("/", "_").replace("-", "_")
-    output_base_dir = os.path.join("synthetic_data", model_name_clean)
+    output_base_dir = os.path.join("synthetic_data", args.dataset, model_name_clean)
     os.makedirs(output_base_dir, exist_ok=True)
     
     # Generate file name with timestamp
@@ -1633,11 +2014,25 @@ Note: Create a .env file in the project root with:
 
     # Generate samples in batches using ThreadPoolExecutor
     target_samples = args.n_examples
-    # reduce default batch size to 100 to avoid token limits
+    
+    # Batch size logic
     max_samples_per_call = args.max_samples_per_call
-    if max_samples_per_call > 100:
+    
+    # 1. Reduce default for OpenRouter to be safer (prevent timeouts/truncation)
+    if args.provider == "openrouter":
+        if max_samples_per_call == 1000: # If user didn't change default
+            print("Suggestion: Reducing max_samples_per_call to 30 for OpenRouter stability.")
+            max_samples_per_call = 50
+        elif max_samples_per_call > 50:
+             print(f"Suggestion: Reducing max_samples_per_call from {max_samples_per_call} to 30 for OpenRouter stability.")
+             max_samples_per_call = 50
+             
+    # 2. General cap at 100 for token limits (existing logic)
+    elif max_samples_per_call > 100:
         print(f"Suggestion: Reducing max_samples_per_call from {max_samples_per_call} to 100 for better stability.")
         max_samples_per_call = 100 
+
+    print(f"Using batch size: {max_samples_per_call}")
 
     all_combined_data = []
     all_raw_texts = []
@@ -1674,7 +2069,7 @@ Note: Create a .env file in the project root with:
     # Shared lock for thread-safe list appending if needed (though extend is atomic usually, good practice)
     data_lock = threading.Lock()
     
-    def process_batch(batch_id, n_samples_batch, validation_assets=None):
+    def process_batch(batch_id, n_samples_batch, validation_assets=None, fairness_instruction=""):
         """
         Process a single batch of generation.
         Returns (valid_data_list, raw_text_list)
@@ -1686,7 +2081,6 @@ Note: Create a .env file in the project root with:
             batch_random_state = args.random_state + batch_id if args.random_state is not None else batch_id * 100
             
             # Targeted Fairness
-            fairness_instruction = ""
             icl_filter = None
             if governor:
                 
@@ -1725,7 +2119,8 @@ Note: Create a .env file in the project root with:
                 icl_examples, 
                 n_samples=n_samples_batch, 
                 fair=args.fair,
-                fairness_instruction=fairness_instruction
+                fairness_instruction=fairness_instruction,
+                sensitive_attrs=args.sensitive_attrs.split(',') if args.sensitive_attrs else None
             )
             
             # Generate
@@ -1753,15 +2148,39 @@ Note: Create a .env file in the project root with:
                 
                 generated_text = "\n".join(mock_lines)
             else:
-                generated_text = generate_with_gemini(
-                    system_message=system_message,
-                    user_message=user_message,
-                    model=args.model,
-                    api_key=args.api_key,
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                    max_output_tokens=args.max_output_tokens,
-                )
+                # API Generation
+                if args.provider == "gemini":
+                    generated_text = generate_with_gemini(
+                        system_message=system_message,
+                        user_message=user_message,
+                        model=args.model,
+                        api_key=args.api_key,
+                        temperature=args.temperature,
+                        top_p=args.top_p,
+                        max_output_tokens=args.max_output_tokens,
+                    )
+                elif args.provider == "openrouter":
+                    # Get API Key from env
+                    or_api_key = os.getenv("OPEN_ROUTER_API_KEY")
+                    if not or_api_key:
+                        raise ValueError("OPEN_ROUTER_API_KEY environment variable is not set. Please set it in .env file.")
+                    
+                    if batch_id == 1:
+                        print(f"MESSAGES TO SEND TO API (Truncated to start):")
+                        full_prompt = f"[SYSTEM MESSAGE]\n{'-'*70}\n{system_message}\n\n[USER MESSAGE]\n{'-'*70}\n{user_message}"
+                        print(f"{full_prompt[:1000]}...\n")
+                        print(f"  Using OpenRouter API with model: {args.model}")
+                        
+                    generated_text = generate_with_openrouter(
+                        system_message=system_message,
+                        user_message=user_message,
+                        model=args.model,
+                        api_key=or_api_key,
+                        temperature=args.temperature,
+                        top_p=args.top_p,
+                        max_tokens=args.max_output_tokens,
+                        # base_url is hardcoded in function default as requested
+                    )
             
             # Parse
             parsed_results = parse_generated_output(generated_text, args.dataset)
@@ -1798,7 +2217,12 @@ Note: Create a .env file in the project root with:
             if not args.no_validate:
                 try:
                     # Import here to avoid issues if module not found/circular imports in threads
-                    from validate_synthetic_data import validate_batch_with_assets, filter_valid_samples
+                    try:
+                        # Try importing from validate module (sibling file)
+                        from validate import validate_batch_with_assets, filter_valid_samples
+                    except ImportError:
+                        # Fallback for module execution
+                        from scripts.validate import validate_batch_with_assets, filter_valid_samples
                     
                     synthetic_sentences = [entry['sentence'] for entry in batch_combined_data]
                     
@@ -1815,7 +2239,10 @@ Note: Create a .env file in the project root with:
                         )
                     else:
                         # Fallback if assets failed to load
-                        from validate_synthetic_data import validate_synthetic_data
+                        try:
+                            from validate import validate_synthetic_data
+                        except ImportError:
+                            from scripts.validate import validate_synthetic_data
                         validation_results = validate_synthetic_data(
                             synthetic_sentences=synthetic_sentences,
                             dataset_name=args.dataset,
@@ -1835,40 +2262,11 @@ Note: Create a .env file in the project root with:
                     # On validation code error, maybe better to discard batch to be safe, or keep?
                     # Let's keep for now but warn
                     pass
-                # (3) Batch-level Label Balancing: Ensure label 0 count == label 1 count
-                if args.fair and batch_combined_data:
-                    labels = [str(entry.get('class-label', entry.get('label', 'unknown'))) for entry in batch_combined_data]
-                    from collections import Counter
-                    counts = Counter(labels)
-                    
-                    # Normalize counts for comparison (using '0' and '1' as strings)
-                    c0 = counts.get('0', 0)
-                    c1 = counts.get('1', 0)
-                    
-                    if args.fair and c0 != c1:
-                        target_n = min(c0, c1)
-                        if target_n > 0:
-                            print(f"  [Batch {batch_id}] Balancing batch labels: {c0} (0), {c1} (1) -> Target: {target_n} each")
-                            
-                            # Categorize by label
-                            data_0 = [e for e in batch_combined_data if str(e.get('class-label', e.get('label', 'unknown'))) == '0']
-                            data_1 = [e for e in batch_combined_data if str(e.get('class-label', e.get('label', 'unknown'))) == '1']
-                            
-                            # Sample down
-                            import random
-                            random.seed(batch_random_state)
-                            if len(data_0) > target_n:
-                                data_0 = random.sample(data_0, target_n)
-                            if len(data_1) > target_n:
-                                data_1 = random.sample(data_1, target_n)
-                                
-                            batch_combined_data = data_0 + data_1
-                            random.shuffle(batch_combined_data)
-                            print(f"  [Batch {batch_id}] Batch re-balanced: {len(batch_combined_data)} samples total")
-                        else:
-                            print(f"  [Batch {batch_id}] ⚠ One label group is empty. Keeping all {len(batch_combined_data)} samples for global balancing.")
-                            # We keep the data even if unbalanced, FairnessGovernor.balance_dataset will fix it globally.
-            
+                # (3) Batch-level Label Balancing: DISABLED per user request to speed up collection
+                # We will balance globally at the end once all subgroups met the target.
+                # if args.fair and batch_combined_data:
+                #    ... (logic removed) ...
+                
             return batch_combined_data, generated_text
             
         except Exception as e:
@@ -1883,16 +2281,23 @@ Note: Create a .env file in the project root with:
     validation_assets = None
     if not args.no_validate:
         try:
-            from validate_synthetic_data import load_validation_assets
+            try:
+                from validate import load_validation_assets
+            except ImportError:
+                from scripts.validate import load_validation_assets
             validation_assets = load_validation_assets(args.dataset, args.model_path)
             print("✓ Validation assets loaded successfully (reusing for all batches)")
         except Exception as e:
             print(f"⚠ Warning: Could not pre-load validation assets: {e}")
             print("  Parallel batches will attempt to load assets individually.")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         # Submit initial set of batches
         for i in range(n_batches_estimated):
+            # Dynamic sleep to stagger requests
+            if i > 0:
+                import time
+                time.sleep(random.uniform(2, 5))
             futures.append(executor.submit(process_batch, i+1, max_samples_per_call, validation_assets))
             
         current_batch_id = n_batches_estimated
@@ -1927,9 +2332,14 @@ Note: Create a .env file in the project root with:
                             if governor:
                                 governor.update(unique_batch_data)
                     
-                    status_msg = f"Progress update: {total_valid_collected}/{target_samples} unique valid samples"
+                    fairness_valid_count = sum(governor.counts.values()) if governor else 0
+                    status_msg = f"Progress update: {total_valid_collected}/{target_samples} total parsed samples"
+                    if governor:
+                         status_msg += f" ({fairness_valid_count} fully valid for fairness)"
+                    
                     if total_duplicates_ignored > 0:
-                        status_msg += f" ({total_duplicates_ignored} duplicates ignored so far)"
+                        status_msg += f" | {total_duplicates_ignored} duplicates ignored"
+                    
                     if governor:
                         status_msg += f"\n  Current distribution: {governor.get_shortfall_report()}"
                     print(f"\n[Generation] {status_msg}")
@@ -1937,17 +2347,29 @@ Note: Create a .env file in the project root with:
                 # Terminate condition check
                 target_met = False
                 if governor:
+                    # Strict fairness check: We only stop if all subgroups have enough samples
                     target_met = governor.is_target_met()
+                    if not target_met:
+                         # Log why we are continuing
+                         print(f"  [Fairness] Subgroup targets not yet met. Continuing...")
                 else:
+                    # Simple count check
                     target_met = total_valid_collected >= target_samples
                 
                 # If we still need more samples and haven't exceeded some reasonable limit
-                # We use a high ceiling (100 or 10x estimated) to allow for many duplicates/invalidations
-                batch_limit = max(100, n_batches_estimated * 10)
+                batch_limit = max(100, n_batches_estimated * 15) # Increased limit slightly
                 if not target_met and current_batch_id < batch_limit:
                     current_batch_id += 1
+                    
+                    # Fetch dynamic fairness instruction to guide the next batch
+                    fairness_instr = ""
+                    if governor:
+                        fairness_instr = governor.get_most_needed_subgroup_instruction()
+                        if fairness_instr:
+                             print(f"  [Targeted] {fairness_instr}")
+                    
                     print(f"Target distribution not yet met ({total_valid_collected} total). Scheduling additional batch {current_batch_id}...")
-                    futures.append(executor.submit(process_batch, current_batch_id, max_samples_per_call, validation_assets))
+                    futures.append(executor.submit(process_batch, current_batch_id, max_samples_per_call, validation_assets, fairness_instr))
                 
                 # Check if we have enough quality data to cancel pending
                 if target_met:
@@ -2033,7 +2455,10 @@ Note: Create a .env file in the project root with:
         print("GENERATING VISUALIZATION")
         print(f"{'='*70}")
         try:
-            from validate_synthetic_data import visualize_synthetic_data_pca
+            try:
+                from validate import visualize_synthetic_data_pca
+            except ImportError:
+                from scripts.validate import visualize_synthetic_data_pca
             
             synthetic_sentences = [entry['sentence'] for entry in combined_data]
             synthetic_labels = []

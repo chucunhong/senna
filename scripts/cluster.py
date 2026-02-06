@@ -881,7 +881,7 @@ Output structure:
         
         # Load model
         import torch
-        from embed_data import load_model
+        from embed import load_model, embed_data
         from components.utils import get_device
         device = get_device()
         print(f"\nLoading model on device: {device}")
@@ -1004,6 +1004,12 @@ Output structure:
                     min_k=args.min_k,
                     method=args.method
                 )
+                
+                # Convert numpy types to native Python types for JSON serialization
+                scores['silhouette_scores'] = [float(s) for s in scores['silhouette_scores']]
+                scores['davies_bouldin_scores'] = [float(s) for s in scores['davies_bouldin_scores']]
+                # inertias are already floats but let's be safe
+                scores['inertias'] = [float(s) for s in scores['inertias']]
                 k = optimal_k
                 
                 # Plot K selection metrics for this group
