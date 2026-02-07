@@ -17,7 +17,26 @@ matplotlib>=3.6.0
 seaborn>=0.12.0
 
 # Machine learning utilities
+scipy>=1.9.0
 scikit-learn>=1.2.0
+
+# Fairness Evaluation & Graphing
+pomegranate>=1.0.0
+networkx>=2.6.0
+pygraphviz>=1.7
 
 # Standard library (included in Python, but listed for completeness)
 # argparse, datetime, os, hashlib, pickle, math, re - all built-in
+
+
+# Quality Metrics
+synthcity>=0.2.0
+sdmetrics>=0.10.0
+lightgbm>=3.3.0
+
+# Baselines
+ctgan>=0.7.0
+flai-causal
+be-great
+tabfairgan
+

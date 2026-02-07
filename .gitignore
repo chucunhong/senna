@@ -11,3 +11,5 @@ cache
 fairness_reports
 downstream_results
 .vscode
+/CLLM
+/TabGEN-ICL

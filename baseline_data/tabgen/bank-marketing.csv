@@ -1,0 +1,12 @@
+age,job,marital,education,default,balance,housing,loan,contact,day,month,duration,campaign,pdays,previous,poutcome,class-label
+43,entrepreneur,married,tertiary,no,-474,yes,no,telephone,12,mar,176,2,-1,3,unknown,no
+55,services,single,primary,no,1472,no,no,cellular,4,jun,96,1,-1,2,unknown,no
+31,unknown,divorced,secondary,no,1225,yes,no,unknown,16,aug,47,4,-1,4,unknown,no
+49,technician,single,secondary,no,2551,no,no,cellular,21,jun,346,6,89,1,unknown,no
+39,management,married,tertiary,no,1834,no,no,cellular,20,apr,112,1,-1,4,success,no
+41,unknown,single,tertiary,no,1296,no,no,cellular,13,jul,138,3,-1,1,unknown,no
+33,blue-collar,married,secondary,no,1908,yes,yes,cellular,18,aug,295,5,-1,0,unknown,no
+23,services,married,secondary,no,2425,no,no,cellular,23,jun,220,2,-1,1,unknown,no
+56,technician,married,tertiary,no,1886,yes,no,cellular,6,sep,127,4,-1,4,success,no
+29,retired,single,secondary,no,-1673,no,no,cellular,29,jul,95,7,69,3,unknown,no
+40,blue-collar,married,tertiary,no,347,no,no,unknown,13,may,126,3,84,0,failure,no

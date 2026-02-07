@@ -1274,10 +1274,16 @@ def visualize_synthetic_data_pca(
     
     plt.tight_layout()
     
+    # Construct save_path from save_dir
+    filename = f"{dataset_name}_pca_visualization.png"
+    save_path = os.path.join(save_dir, filename)
+    
     if save_path:
         plt.savefig(save_path, dpi=300)
         print(f"✓ Saved PCA visualization to: {save_path}")
     
+    # Default show_plot to False since we are running as script
+    show_plot = False
     if show_plot:
         plt.show()
     else:

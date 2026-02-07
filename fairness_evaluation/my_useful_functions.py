@@ -349,11 +349,14 @@ def calculate_performance_predictive_parity(data, labels, predictions, saIndex, 
     else:
         tpr_non_protected = 0.
         tnr_non_protected = 0.
-    if (tp_non_protected + fp_non_protected!=0):
+    if (tp_protected + fp_protected) != 0:
         ppv_protected = tp_protected / (tp_protected + fp_protected)
-        ppv_non_protected = tp_non_protected / (tp_non_protected + fp_non_protected)
     else:
         ppv_protected = 0.0
+
+    if (tp_non_protected + fp_non_protected) != 0:
+        ppv_non_protected = tp_non_protected / (tp_non_protected + fp_non_protected)
+    else:
         ppv_non_protected = 0.0
     C_prot = (protected_pos) / (protected_pos + protected_neg)
     if (non_protected_pos + non_protected_neg!= 0):
@@ -2045,3 +2048,49 @@ def plot_my_results_single_vs_amort_sp(results, names, output_dir, dataset):
     # plt.ylabel('(%)')
     # plt.title("Performance for " + dataset)
     plt.savefig(output_dir + ".png",bbox_inches='tight', dpi=400)
+
+# Individual Fairness: Theil Index (Generalized Entropy Index with alpha=1)
+def calculate_theil_index(benefits):
+    """
+    Calculate the Theil Index (Generalized Entropy Index with alpha=1).
+    Specific for Individual Fairness where 'benefit' is the predicted probability of the favorable outcome.
+    
+    Formula: T = (1/n) * sum( (b_i / mu) * ln(b_i / mu) )
+    where b_i is the benefit for individual i, and mu is the average benefit.
+    
+    Args:
+        benefits (array-like): Array of benefit values for each individual. 
+                               Typically predicted probabilities of the favorable class.
+                               Result should be non-negative.
+    
+    Returns:
+         float: Theil Index. 0 indicates perfect equality (fairness).
+    """
+    benefits = numpy.array(benefits)
+    
+    # Ensure benefits are non-negative and handle zeros for log
+    # For Theil index, if b_i is 0, the term 0 * ln(0) is defined as 0.
+    # We can mask zeros or add a very small epsilon if strictly positive needed, 
+    # but standard definition allows 0.
+    
+    mu = numpy.mean(benefits)
+    
+    if mu == 0:
+        return 0.0 # If average benefit is 0, essentially equality (everyone 0)
+    
+    # Calculate ratios b_i / mu
+    ratios = benefits / mu
+    
+    # Calculate terms: ratio * ln(ratio)
+    # Handle 0 values: 0 * ln(0) -> 0
+    # We use numpy 'where' to handle log(0)
+    
+    # Avoid log(0) warning by replacing 0 with 1 (log(1)=0) resulting in 0 term
+    # or just use a mask.
+    ratios_safe = r_safe = numpy.where(ratios == 0, 1.0, ratios)
+    
+    terms = ratios * numpy.log(ratios_safe)
+    
+    theil_index = numpy.mean(terms)
+    
+    return float(theil_index)

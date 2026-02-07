@@ -50,8 +50,30 @@ class FairnessGovernor:
         key_parts.append(f"label:{label}")
         
         for attr in self.sensitive_attrs:
-            val = str(entry.get(attr, "unknown")).lower().strip()
-            key_parts.append(f"{attr}:{val}")
+            # Check for attr, lower(attr), or Capitalized(attr)
+            val = entry.get(attr, entry.get(attr.lower(), entry.get(attr.capitalize(), 'unknown')))
+            
+            # Special handling for 'age' in bank-marketing to avoid too many groups
+            if attr.lower() == 'age' and self.dataset_name == 'bank-marketing':
+                try:
+                    age_val = int(val)
+                    if age_val < 30: val_str = "<30"
+                    elif age_val <= 60: val_str = "30-60"
+                    else: val_str = ">60"
+                except (ValueError, TypeError):
+                    val_str = str(val).lower().strip()
+            # Special handling for 'age' in german-credit-data (often <25 vs >=25 is the fairness cut)
+            elif attr.lower() == 'age' and self.dataset_name == 'german-credit-data':
+                try:
+                    age_val = int(val)
+                    if age_val <= 25: val_str = "<=25" # Young
+                    else: val_str = ">25" # Older
+                except (ValueError, TypeError):
+                     val_str = str(val).lower().strip()
+            else:
+                val_str = str(val).lower().strip()
+            
+            key_parts.append(f"{attr}:{val_str}")
         return ",".join(key_parts)
 
     def update(self, entries: List[Dict]):
@@ -134,7 +156,13 @@ class FairnessGovernor:
             if not group_data: return False
             subgroup_counts = {}
             for s in group_data:
-                attr_vals = tuple(str(s.get(attr, "unknown")).lower().strip() for attr in self.sensitive_attrs)
+                # Robust extraction: Check for attr, lower(attr), or Capitalized(attr)
+                attr_vals = []
+                for attr in self.sensitive_attrs:
+                    val = s.get(attr, s.get(attr.lower(), s.get(attr.capitalize(), 'unknown')))
+                    attr_vals.append(str(val).lower().strip())
+                attr_vals = tuple(attr_vals)
+                
                 # Skip unknown values for stopping condition
                 if any(v in ['unknown', 'none', 'null', 'nan'] for v in attr_vals):
                     continue
@@ -150,14 +178,12 @@ class FairnessGovernor:
             n_div = max(2, n_subgroups_found)
             min_per_subgroup = label_target // n_div
             
-            # If we haven't found at least 2 diverse groups yet (e.g. only male), keep going
-            # Unless the dataset inherently only has 1 group? No, assuming we want fairness.
-            # But let's be careful not to infinite loop if only 1 group exists in data.
-            # For now, let's stick to the user's implicit "balanced" requirement which implies >1.
-            pass 
+            # DEBUG-FAIRNESS
+            # print(f"  [FairnessCheck] Found {n_subgroups_found} subgroups. Target {label_target}/{n_div}={min_per_subgroup}. Counts: {subgroup_counts}")
 
             for count in subgroup_counts.values():
                 if count < min_per_subgroup: # No margin, we need full count for perfect balance
+                    # print(f"  [FairnessCheck] FAIL: Count {count} < {min_per_subgroup}")
                     return False
             
             return True
@@ -179,7 +205,8 @@ class FairnessGovernor:
             
         for s in self.samples:
              for attr in self.sensitive_attrs:
-                 val = str(s.get(attr, "unknown")).lower().strip()
+                 val = s.get(attr, s.get(attr.lower(), s.get(attr.capitalize(), 'unknown')))
+                 val = str(val).lower().strip()
                  if val not in ['unknown', 'none', 'null', 'nan', '']:
                      seen_values[attr].add(val)
                      
@@ -282,8 +309,13 @@ class FairnessGovernor:
             # Analyze groups
             group_counts = {}
             for s in group_data:
-                # Get sensitive attr values for this sample
-                attr_vals = tuple(str(s.get(attr, "unknown")).lower().strip() for attr in self.sensitive_attrs)
+                # Get sensitive attr values for this sample - Robust extraction
+                attr_vals = []
+                for attr in self.sensitive_attrs:
+                    val = s.get(attr, s.get(attr.lower(), s.get(attr.capitalize(), 'unknown')))
+                    attr_vals.append(str(val).lower().strip())
+                attr_vals = tuple(attr_vals)
+                
                 if attr_vals not in group_counts: group_counts[attr_vals] = []
                 group_counts[attr_vals].append(s)
             
@@ -583,6 +615,23 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
                 if not sentence_clean.endswith('.'):
                     sentence_clean += '.'
                 sentence_clean += f" The credit application decision is {label_desc}."
+            
+            elif dataset_name == 'bank-marketing':
+                # Format: "The subscription decision is {label}."
+                # Label is 'subscribed' or 'not subscribed' (or 1/0 mapped)
+                # Check dataset structure: class-label is 'yes'/'no' or 1/0?
+                # Usually bank-marketing is yes/no. 
+                # Prompts says: "class-label: subscribed or not subscribed"
+                # Let's handle both 1/0 and yes/no.
+                lbl_str = str(label).strip().lower()
+                if lbl_str in ['1', 'yes', 'subscribed']:
+                    label_desc = "subscribed"
+                else: 
+                    label_desc = "not subscribed"
+                
+                if not sentence_clean.endswith('.'):
+                    sentence_clean += '.'
+                sentence_clean += f" The subscription decision is {label_desc}."
         
         # Format as example
         examples.append(f"Example {i}: {sentence_clean}")
@@ -821,7 +870,10 @@ def generate_with_gemini(
     
     # Initialize client (will use API key from environment)
     print(f"\nUsing Google Gemini API with model: {model}")
-    client = genai.Client()
+    
+    # Configure client with timeout
+    # timeout is in milliseconds in http_options
+    client = genai.Client(http_options={'timeout': 120000}) # 120 seconds
     
     # Combine system message and user message for Gemini
     # Gemini uses a single prompt, so we combine system and user messages
@@ -839,34 +891,49 @@ def generate_with_gemini(
     print(user_message[:1000] + "..." if len(user_message) > 1000 else user_message)
     print("="*70 + "\n")
     
-    # Call API
-    print("Calling API...")
-    try:
-        # Call generate_content directly (as shown in Gemini 3 Developer Guide)
-        # Simple call with just model and contents
-        response = client.models.generate_content(
-            model=model,
-            contents=full_prompt
-        )
-        
-        generated_text = response.text
-        
-        # Print usage info if available
-        print(f"\n✓ Generation complete")
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            usage = response.usage_metadata
-            if hasattr(usage, 'prompt_token_count'):
-                print(f"  Prompt tokens: {usage.prompt_token_count}")
-            if hasattr(usage, 'candidates_token_count'):
-                print(f"  Completion tokens: {usage.candidates_token_count}")
-            if hasattr(usage, 'total_token_count'):
-                print(f"  Total tokens: {usage.total_token_count}")
-        
-        return generated_text
-        
-    except Exception as e:
-        print(f"\n❌ Error calling API: {e}")
-        raise
+    # Retry logic
+    max_retries = 3
+    base_delay = 2
+    
+    for attempt in range(max_retries + 1):
+        print(f"Calling API (Attempt {attempt+1}/{max_retries+1})...")
+        try:
+            # Call generate_content directly (as shown in Gemini 3 Developer Guide)
+            # Simple call with just model and contents
+            response = client.models.generate_content(
+                model=model,
+                contents=full_prompt
+            )
+            
+            generated_text = response.text
+            
+            # Print usage info if available
+            print(f"\n✓ Generation complete")
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = response.usage_metadata
+                if hasattr(usage, 'prompt_token_count'):
+                    print(f"  Prompt tokens: {usage.prompt_token_count}")
+                if hasattr(usage, 'candidates_token_count'):
+                    print(f"  Completion tokens: {usage.candidates_token_count}")
+                if hasattr(usage, 'total_token_count'):
+                    print(f"  Total tokens: {usage.total_token_count}")
+            
+            return generated_text
+            
+        except Exception as e:
+            msg = str(e)
+            print(f"\n❌ Error calling API (Attempt {attempt+1}): {msg}")
+            
+            # If it's a timeout or connection error, we retry
+            is_last_attempt = attempt == max_retries
+            if is_last_attempt:
+                print("Max retries reached. Raising exception.")
+                raise e
+            
+            # Exponential backoff
+            delay = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
+            print(f"   Retrying in {delay:.2f} seconds...")
+            time.sleep(delay)
 
 
 def parse_generated_output(generated_text: str, dataset_name: str) -> List[Dict]:
@@ -1127,6 +1194,15 @@ def extract_sentence_and_label(text: str, dataset_name: str = None) -> tuple:
         elif sentence.strip().endswith(' 1'):
              label = 1
              sentence = sentence[:-2].strip()
+
+    elif dataset_name == 'bank-marketing':
+        # Look for "subscription decision is subscribed" or "subscription decision is not subscribed"
+        if re.search(r'decision\s+is\s+subscribed', sentence, re.IGNORECASE) and not re.search(r'not\s+subscribed', sentence, re.IGNORECASE):
+            label = 1  # yes/subscribed
+            sentence = re.sub(r'\.?\s*The\s+subscription\s+decision\s+is\s+subscribed\.?', '', sentence, flags=re.IGNORECASE).strip()
+        elif re.search(r'decision\s+is\s+not\s+subscribed', sentence, re.IGNORECASE):
+            label = 0  # no/not subscribed
+            sentence = re.sub(r'\.?\s*The\s+subscription\s+decision\s+is\s+not\s+subscribed\.?', '', sentence, flags=re.IGNORECASE).strip()
     
     # If not found, try numeric label patterns
     if label is None:
