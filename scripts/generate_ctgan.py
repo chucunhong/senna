@@ -30,7 +30,7 @@ def get_discrete_columns(df):
                 discrete_columns.append(col)
     return discrete_columns
 
-def generate_data(csv_path, output_path, epochs=300):
+def generate_data(csv_path, output_path, epochs=200):
     print(f"Processing {csv_path}...")
     try:
         # Load Data
@@ -69,15 +69,15 @@ def generate_data(csv_path, output_path, epochs=300):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic data using CTGAN.")
-    parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs.")
+    parser.add_argument("--epochs", type=int, default=200, help="Number of training epochs.")
     args = parser.parse_args()
 
     # Target Datasets
     # The user said "4 original datasets". 
     # We prioritize the ones we know are used in fairness evals
     target_files = [
-        "adult.csv",
-        "bank-marketing.csv" # 4th likely candidate
+        "german-credit-data.csv",
+        "credit-scoring.csv"
     ]
     
     # Also look for others if explicit ones are missing

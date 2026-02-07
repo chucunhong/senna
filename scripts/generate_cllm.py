@@ -35,14 +35,13 @@ API_DETAILS = {
     "api_key": API_KEY,
 }
 
-MODEL = "meta-llama/llama-3.1-8b-instruct" # Faster/Cheaper model
+MODEL = "anthropic/claude-3.5-haiku" # Faster/Cheaper model
 LLM_SERVING = "openrouter"
 
 DATASET_TARGETS = {
     'adult.csv': 'class-label',
     'german-credit-data.csv': 'class-label',
     'credit-scoring.csv': 'class-label',
-    'bank-marketing.csv': 'class-label',
 }
 
 def generate_data_cllm(csv_path, output_path, n_samples=1000, n_processes=5):

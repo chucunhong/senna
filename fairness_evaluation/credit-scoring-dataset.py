@@ -50,8 +50,16 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
         if len(num_cols) > 0: df_real[num_cols] = df_real[num_cols].fillna(df_real[num_cols].median())
     
     # Load Synthetic Data for Quality Metrics
-    df_fake = pd.read_csv(csv_path)
-    # Impute NaNs for quality metrics (Data Level)
+    try:
+        df_fake = pd.read_csv(csv_path)
+        if len(df_fake) < 10:
+            print(f"Skipping {csv_path}: Too few samples ({len(df_fake)})")
+            return
+
+        # Impute NaNs for quality metrics (Data Level)
+    except Exception as e:
+        print(f"Error reading {csv_path}: {e}")
+        return
     cat_cols_f = df_fake.select_dtypes(include=['object', 'string']).columns
     num_cols_f = df_fake.select_dtypes(include=[np.number]).columns
     if len(cat_cols_f) > 0: df_fake[cat_cols_f] = df_fake[cat_cols_f].fillna("MISSING")
@@ -115,7 +123,7 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
     print(f"\nModel: {model_subfolder} | Data: {csv_name}")
     print(f"Running {n_runs} evaluations...")
     
-    algorithms = ['DT', 'NB', 'MLP', 'kNN']
+    algorithms = ['DT', 'MLP', 'kNN']
     results = {algo: [] for algo in algorithms}
     
     for i in range(n_runs):
@@ -126,8 +134,14 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
         except ValueError:
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=seed)
         
+        # Scale Data (Important for MLP and kNN)
+        scaler = StandardScaler()
+        X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
+        X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns, index=X_test.index)
+        
         for algo in algorithms:
-            metrics = run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, sa_index, p_Group, protected_attribute, maj_name, min_name, algo, run_id=i)
+            # Pass scaled data
+            metrics = run_experiment(model_subfolder, csv_name, X_train_scaled, X_test_scaled, y_train, y_test, sa_index, p_Group, protected_attribute, maj_name, min_name, algo, run_id=i, verbose=True)
             results[algo].append(metrics)
             
     # Aggregate and Print Results
@@ -156,6 +170,21 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
                 print(f"{algo:<10} | {metric:<20} | {mean_val:.4f}     | {std_val:.4f}")
             else:
                  print(f"{algo:<10} | {metric:<20} | NaN        | NaN")
+        
+        # Print LaTeX formatted string for this algo
+        latex_metrics_order = ['F1 Score', 'Statistical Parity', 'Equalized Odds', 'Predictive Parity', 'ABROCA', 'Theil Index']
+        latex_parts = []
+        for metric in latex_metrics_order:
+            values = [m.get(metric, np.nan) for m in algo_metrics]
+            values_clean = [v for v in values if pd.notna(v) and not np.isinf(v)]
+            if values_clean:
+                mean_val = np.mean(values_clean)
+                std_val = np.std(values_clean)
+                latex_parts.append(f"${mean_val:.4f}_{{\\,\\pm {std_val:.4f}}}$")
+            else:
+                 latex_parts.append(f"NaN_{{\\,\\pm NaN}}")
+        
+        print("Latex: " + " & ".join(latex_parts) + " \\\\")
         print("-" * 100)
 try:
     from pomegranate import *
@@ -171,6 +200,7 @@ warnings.filterwarnings('ignore')
 
 # Set root directories
 SYNTHETIC_ROOT = "/Users/doanthang/Desktop/Code/Fairness/Dist_Learn_Fair_Tab/synthetic_data/credit-scoring"
+BASELINE_ROOT = "baseline_data" # Assumed relative to project root
 EVAL_OUTPUT_ROOT = "fairness_evaluation/credit-scoring"
 
 def get_bn_structure_and_data(csv_path):
@@ -320,12 +350,20 @@ def run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, 
     else:
         return {}
 
+    
+    if verbose:
+        print(f"  [DEBUG] Training {algorithm} (Run {run_id})...")
+        
     clf.fit(X_train, y_train)
+    
+    if verbose:
+        print(f"  [DEBUG] Predicting {algorithm}...")
+        
     y_predicts = clf.predict(X_test)
     y_probs = clf.predict_proba(X_test)[:, 1]
     
     if verbose:
-        print(f"--- Results for {algorithm} on {csv_name} (Run {run_id}) ---")
+        print(f"  [DEBUG] Finished {algorithm}. Calculating metrics...")
     
     metrics_dict = {}
     
@@ -334,12 +372,17 @@ def run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, 
         sp_res = calculate_performance_statistical_parity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)
         
         metrics_dict['Accuracy'] = sp_res['accuracy']
+        metrics_dict['F1 Score'] = sp_res['f1-score']  # Explicitly add F1 Score to dict
+        
+        if np.isnan(metrics_dict['F1 Score']):
+             print(f"[DEBUG] F1 is NaN for {algorithm}. y_test unique: {np.unique(y_test)}, y_pred unique: {np.unique(y_predicts)}")
+        
         metrics_dict['Balanced Accuracy'] = sp_res['balanced_accuracy']
         
         metrics_dict['Statistical Parity'] = sp_res['fairness']
         metrics_dict['Equalized Odds'] = calculate_performance_equalized_odds(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
-        metrics_dict['Equal Opportunity'] = calculate_performance_equal_opportunity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
-        # metrics_dict['Predictive Parity'] = calculate_performance_predictive_parity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
+        # metrics_dict['Equal Opportunity'] = calculate_performance_equal_opportunity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
+        metrics_dict['Predictive Parity'] = calculate_performance_predictive_parity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
         metrics_dict['Predictive Equality'] = calculate_performance_predictive_equality(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
         # metrics_dict['Treatment Equality'] = calculate_performance_treatment_equality(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
 
@@ -436,6 +479,29 @@ def main():
         
         # Run Evaluation
         run_eval_for_file(csv_path, model_subfolder, n_runs=args.runs)
+
+    # 3. Evaluate Baseline Datasets
+    # Find all CSV files in subdirectories of baseline_data matching the dataset name
+    # credits scoring filename: credit-scoring.csv
+    search_pattern_baseline = os.path.join(BASELINE_ROOT, "*", "credit-scoring.csv")
+    baseline_files = glob.glob(search_pattern_baseline)
+    
+    if baseline_files:
+        print("\n" + "="*50)
+        print("EVALUATING BASELINE DATASETS")
+        print("="*50)
+        print(f"Found {len(baseline_files)} baseline datasets in {BASELINE_ROOT}")
+        
+        for csv_path in baseline_files:
+            # Determine method name from parent directory (e.g. 'ctgan', 'tabgen')
+            parent_dir = os.path.dirname(csv_path)
+            method_name = os.path.basename(parent_dir)
+            model_subfolder = f"Baseline_{method_name}"
+            
+            print(f"\nProcessing Baseline: {method_name} / {os.path.basename(csv_path)}")
+            
+            # Run Evaluation
+            run_eval_for_file(csv_path, model_subfolder, n_runs=args.runs)
 
 if __name__ == "__main__":
     main()

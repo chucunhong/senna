@@ -13,3 +13,7 @@ downstream_results
 .vscode
 /CLLM
 /TabGEN-ICL
+/synthetic_data
+/baseline_data
+/workspace
+synthetic_data

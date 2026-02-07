@@ -68,7 +68,7 @@ def slice_plot(
     plt.rcParams['legend.loc'] = 'lower right'
     title = "ABROCA = " + str(value)
     plt.title(title,fontdict={'fontsize': 18},fontweight="bold")
-    plt.xlabel("False Positive Rate",fontweight='bold',fontsize=18)
+    plt.xlabel("False   Positive Rate",fontweight='bold',fontsize=18)
     plt.ylabel("True Positive Rate",fontweight='bold',fontsize=18)
     plt.ylim((-0.04, 1.04))
     plt.plot(
@@ -87,11 +87,14 @@ def slice_plot(
         linestyle="-",
         color="b",
     )
-    plt.fill(
-        majority_roc_fpr.tolist() + np.flipud(minority_roc_fpr).tolist(),
-        majority_roc_tpr.tolist() + np.flipud(minority_roc_tpr).tolist(),
-        "y",
-    )
+    try:
+        x_fill = majority_roc_fpr.tolist() + np.flipud(minority_roc_fpr).tolist()
+        y_fill = majority_roc_tpr.tolist() + np.flipud(minority_roc_tpr).tolist()
+        plt.fill(x_fill, y_fill, "y", alpha=0.2)
+    except Exception as e:
+        print(f"[ERROR] plt.fill failed: {e}")
+        # print(f"x_fill: {x_fill[:5]}... type: {type(x_fill)}")
+        # print(f"y_fill: {y_fill[:5]}... type: {type(y_fill)}")
     plt.legend()
     plt.tight_layout()
     plt.savefig(fout,pad_inches=0)

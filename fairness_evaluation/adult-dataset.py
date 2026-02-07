@@ -46,6 +46,7 @@ warnings.filterwarnings('ignore')
 
 # Set root directories
 SYNTHETIC_ROOT = "/Users/doanthang/Desktop/Code/Fairness/Dist_Learn_Fair_Tab/synthetic_data/adult"
+BASELINE_ROOT = "baseline_data" # Assumed relative to project root
 EVAL_OUTPUT_ROOT = "fairness_evaluation/adult"
 
 def get_bn_structure_and_data(csv_path):
@@ -256,6 +257,10 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
     # Load Synthetic Data for Quality Metrics
     try:
         df_fake = pd.read_csv(csv_path)
+        if len(df_fake) < 10:
+            print(f"Skipping {csv_path}: Too few samples ({len(df_fake)})")
+            return
+
         # Impute NaNs for quality metrics
         cat_cols_f = df_fake.select_dtypes(include=['object', 'string']).columns
         num_cols_f = df_fake.select_dtypes(include=[np.number]).columns
@@ -293,9 +298,22 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
             det_score = detection_score(df_real, df_fake)
             print(f"Detection Score (ROC AUC): {det_score:.4f}")
             
-            # DCR
-            dcr_val = DCR(df_real, df_fake)
-            print(f"DCR (Distance to Closest Record): {dcr_val[0]:.4f}")
+            # DCR (Sampled if necessary)
+            if len(df_real) > 2000:
+                df_real_sample = df_real.sample(n=2000, random_state=42)
+            else:
+                df_real_sample = df_real
+                
+            if len(df_fake) > 2000:
+                 df_fake_sample = df_fake.sample(n=2000, random_state=42)
+            else:
+                 df_fake_sample = df_fake
+                 
+            try:
+                dcr_val = DCR(df_real_sample, df_fake_sample)
+                print(f"DCR (Distance to Closest Record): {dcr_val[0]:.4f}")
+            except Exception as e:
+                print(f"Error calculating DCR: {e}")
             
             # KS & TV
             ks = ks_score(df_real, df_fake)
@@ -320,16 +338,16 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
     print(f"\nModel: {model_subfolder} | Data: {csv_name}")
     print(f"Running {n_runs} evaluations...")
     
-    algorithms = ['DT', 'NB', 'MLP', 'kNN']
+    algorithms = ['DT', 'MLP', 'kNN']
     results = {algo: [] for algo in algorithms}
     
     for i in range(n_runs):
         # Split Data with varying seed
         seed = 42 + i
         try:
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=seed, stratify=y)
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=seed, stratify=y)
         except ValueError:
-             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=seed)
+             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=seed)
         
         for algo in algorithms:
             metrics = run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, sa_index, p_Group, protected_attribute, maj_name, min_name, algo, run_id=i)
@@ -357,6 +375,21 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
                 print(f"{algo:<10} | {metric:<20} | {mean_val:.4f}     | {std_val:.4f}")
             else:
                  print(f"{algo:<10} | {metric:<20} | NaN        | NaN")
+        
+        # Print LaTeX formatted string for this algo
+        latex_metrics_order = ['F1 Score', 'Statistical Parity', 'Equalized Odds', 'Predictive Parity', 'ABROCA', 'Theil Index']
+        latex_parts = []
+        for metric in latex_metrics_order:
+            values = [m.get(metric, np.nan) for m in algo_metrics]
+            values_clean = [v for v in values if pd.notna(v) and not np.isinf(v)]
+            if values_clean:
+                mean_val = np.mean(values_clean)
+                std_val = np.std(values_clean)
+                latex_parts.append(f"${mean_val:.4f}_{{\\,\\pm {std_val:.4f}}}$")
+            else:
+                 latex_parts.append(f"NaN_{{\\,\\pm NaN}}")
+        
+        print("Latex: " + " & ".join(latex_parts) + " \\\\")
         print("-" * 100)
 
 def main():
@@ -400,7 +433,31 @@ def main():
             else:
                 print("Warning: --plot-bn requested but 'pomegranate' not installed. Skipping BN plot.")
         
+        # Run Evaluation
         run_eval_for_file(csv_path, model_subfolder, n_runs=args.runs)
+
+    # 3. Evaluate Baseline Datasets
+    # Find all CSV files in subdirectories of baseline_data matching the dataset name
+    # adult filename: adult.csv
+    search_pattern_baseline = os.path.join(BASELINE_ROOT, "*", "adult.csv")
+    baseline_files = glob.glob(search_pattern_baseline)
+    
+    if baseline_files:
+        print("\n" + "="*50)
+        print("EVALUATING BASELINE DATASETS")
+        print("="*50)
+        print(f"Found {len(baseline_files)} baseline datasets in {BASELINE_ROOT}")
+        
+        for csv_path in baseline_files:
+            # Determine method name from parent directory (e.g. 'ctgan', 'tabgen')
+            parent_dir = os.path.dirname(csv_path)
+            method_name = os.path.basename(parent_dir)
+            model_subfolder = f"Baseline_{method_name}"
+            
+            print(f"\nProcessing Baseline: {method_name} / {os.path.basename(csv_path)}")
+            
+            # Run Evaluation
+            run_eval_for_file(csv_path, model_subfolder, n_runs=args.runs)
 
 if __name__ == "__main__":
     main()

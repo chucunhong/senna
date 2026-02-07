@@ -45,6 +45,7 @@ warnings.filterwarnings('ignore')
 
 # Set root directories
 SYNTHETIC_ROOT = "/Users/doanthang/Desktop/Code/Fairness/Dist_Learn_Fair_Tab/synthetic_data/german-credit-data"
+BASELINE_ROOT = "baseline_data" # Assumed relative to project root
 EVAL_OUTPUT_ROOT = "fairness_evaluation/german-credit-data"
 
 def get_bn_structure_and_data(csv_path):
@@ -273,8 +274,13 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
          if len(num_cols) > 0: df_real[num_cols] = df_real[num_cols].fillna(df_real[num_cols].median())
 
     # Load Synthetic Data for Quality Metrics
+    # Load Synthetic Data for Quality Metrics
     try:
         df_fake = pd.read_csv(csv_path)
+        if len(df_fake) < 10:
+            print(f"Skipping {csv_path}: Too few samples ({len(df_fake)})")
+            return
+            
         # Impute NaNs for quality metrics
         cat_cols_f = df_fake.select_dtypes(include=['object', 'string']).columns
         num_cols_f = df_fake.select_dtypes(include=[np.number]).columns
@@ -380,6 +386,21 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
                 print(f"{algo:<10} | {metric:<20} | {mean_val:.4f}     | {std_val:.4f}")
             else:
                  print(f"{algo:<10} | {metric:<20} | NaN        | NaN")
+        
+        # Print LaTeX formatted string for this algo
+        latex_metrics_order = ['F1 Score', 'Statistical Parity', 'Equalized Odds', 'Predictive Parity', 'ABROCA', 'Theil Index']
+        latex_parts = []
+        for metric in latex_metrics_order:
+            values = [m.get(metric, np.nan) for m in algo_metrics]
+            values_clean = [v for v in values if pd.notna(v) and not np.isinf(v)]
+            if values_clean:
+                mean_val = np.mean(values_clean)
+                std_val = np.std(values_clean)
+                latex_parts.append(f"${mean_val:.4f}_{{\\,\\pm {std_val:.4f}}}$")
+            else:
+                 latex_parts.append(f"NaN_{{\\,\\pm NaN}}")
+        
+        print("Latex: " + " & ".join(latex_parts) + " \\\\")
         print("-" * 100)
 
 def main():
@@ -431,6 +452,29 @@ def main():
         
         # Run Evaluation
         run_eval_for_file(csv_path, model_subfolder, n_runs=args.runs)
+
+    # 3. Evaluate Baseline Datasets
+    # Find all CSV files in subdirectories of baseline_data matching the dataset name
+    # german credit filename: german-credit-data.csv
+    search_pattern_baseline = os.path.join(BASELINE_ROOT, "*", "german-credit-data.csv")
+    baseline_files = glob.glob(search_pattern_baseline)
+    
+    if baseline_files:
+        print("\n" + "="*50)
+        print("EVALUATING BASELINE DATASETS")
+        print("="*50)
+        print(f"Found {len(baseline_files)} baseline datasets in {BASELINE_ROOT}")
+        
+        for csv_path in baseline_files:
+            # Determine method name from parent directory (e.g. 'ctgan', 'tabgen')
+            parent_dir = os.path.dirname(csv_path)
+            method_name = os.path.basename(parent_dir)
+            model_subfolder = f"Baseline_{method_name}"
+            
+            print(f"\nProcessing Baseline: {method_name} / {os.path.basename(csv_path)}")
+            
+            # Run Evaluation
+            run_eval_for_file(csv_path, model_subfolder, n_runs=args.runs)
 
 if __name__ == "__main__":
     main()

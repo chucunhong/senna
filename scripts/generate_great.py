@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--samples", type=int, default=1000, help="Number of samples to generate.")
     parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs.") # Reduced default for speed
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
-    parser.add_argument("--llm", type=str, default='distilgpt2', help="HuggingFace model name (e.g. gpt2, distilgpt2).")
+    parser.add_argument("--llm", type=str, default='gpt2', help="HuggingFace model name (e.g. gpt2, distilgpt2).")
     
     args = parser.parse_args()
 

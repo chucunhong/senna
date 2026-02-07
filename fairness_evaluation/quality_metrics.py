@@ -164,20 +164,114 @@ def prdc_score(real: pd.DataFrame,
     real_scaled = scaler.fit_transform(real_dummies)
     fake_scaled = scaler.transform(fake_dummies)
 
-    # compute prdc using synthcity
+    # compute prdc using standalone implementation (fix for synthcity/torchvision error)
     try:
-        from synthcity.metrics.eval_statistical import PRDCScore
-        from synthcity.plugins.core.dataloader import GenericDataLoader
+        # Standalone PRDC Implementation
+        from sklearn.neighbors import NearestNeighbors
         
-        real_loader = GenericDataLoader(real_scaled)
-        fake_loader = GenericDataLoader(fake_scaled)
+        real_features = real_scaled
+        fake_features = fake_scaled
+        nearest_k = neares_k
 
-        # print("PRDCScore")
-        prdc = PRDCScore(nearest_k=neares_k)
-        # print("Done")
-        with suppress_stdout():
-            scores = prdc.evaluate(real_loader, fake_loader)
-        return [scores["precision"], scores["recall"], scores["density"], scores["coverage"]]
+        # 1. Fit Nearest Neighbors
+        real_nn = NearestNeighbors(n_neighbors=nearest_k, n_jobs=-1).fit(real_features)
+        fake_nn = NearestNeighbors(n_neighbors=nearest_k, n_jobs=-1).fit(fake_features)
+
+        # 2. Compute Radii (distance to k-th nearest neighbor)
+        real_dists, _ = real_nn.kneighbors(real_features)
+        fake_dists, _ = fake_nn.kneighbors(fake_features)
+        
+        real_radii = real_dists[:, nearest_k-1] # k-th neighbor (0-indexed is 1st, so k-1 is k-th)
+        fake_radii = fake_dists[:, nearest_k-1]
+
+        # 3. Compute Precision, Recall, Density, Coverage
+        # Check condition: dist(fake_j, real_i) <= real_radii[i]
+        
+        # Optimization: Batch processing to avoid huge matrix if standard RAM is constrained.
+        # But 20k x 20k float32 is ~1.6GB, usually fine. 
+        # To be safe on smaller machines, we can iterate if memory error occurs or just use a chunk size.
+        # For now, let's try direct computation but wrap in try-except for memory.
+        
+        from sklearn.metrics import pairwise_distances
+        
+        # Precision & Density (Fake -> Real Manifold)
+        # Compute pairwise distances [N_fake, N_real]
+        dists_fake_to_real = pairwise_distances(fake_features, real_features, n_jobs=-1)
+        
+        # In Manifold: dist(fake_j, real_i) <= real_radii[i]
+        # Broadcasting: (N_fake, N_real) <= (1, N_real)
+        in_real_manifold = dists_fake_to_real <= real_radii.reshape(1, -1)
+        
+        precision = np.mean(np.any(in_real_manifold, axis=1)) # Fraction of fake points in at least one real manifold
+        density = np.mean(np.sum(in_real_manifold, axis=1) / nearest_k) # Mean density
+        
+        # Recall & Coverage (Real -> Fake Manifold)
+        # In Manifold: dist(real_i, fake_j) <= fake_radii[j]
+        # We can reuse dists_fake_to_real by transposing: dists_real_to_fake = dists_fake_to_real.T
+        # But simpler: (N_real, N_fake) <= (1, N_fake)
+        dists_real_to_fake = dists_fake_to_real.T
+        in_fake_manifold = dists_real_to_fake <= fake_radii.reshape(1, -1)
+
+        recall = np.mean(np.any(in_fake_manifold, axis=1)) # Fraction of real points in at least one fake manifold
+        coverage = np.mean(np.any(in_fake_manifold, axis=0)) # Fraction of fake manifolds containing at least one real point (?)
+        # Wait, standard Coverage definition: Fraction of real points covered by at least one fake manifold?
+        # Re-checking standard definition (e.g. Ferjad Naeem et al / ClovaAI):
+        # Coverage: Fraction of real data points that are covered by at least one fake manifold.
+        # Yes: np.mean(np.any(in_fake_manifold, axis=1)) is Recall? 
+        # Actually in ClovaAI implementation:
+        # Recall = fraction of Real points that are within the manifold of any Fake point?
+        # Let's double check definitions.
+        # Precision: fraction of Fake points within manifold of any Real point.
+        # Recall: fraction of Real points within manifold of any Fake point.
+        # Density: average number of Real manifolds that contain a Fake point.
+        # Coverage: fraction of Real manifolds that contain at least one Fake point.
+        
+        # Let's align with ClovaAI exactly:
+        # Precision: mean( any( dist(f, r_i) <= r_radius_i ) over i ) -> Fake points in Real manifolds.
+        # Recall:    mean( any( dist(r, f_j) <= f_radius_j ) over j ) -> Real points in Fake manifolds.
+        # Density:   mean( sum( dist(f, r_i) <= r_radius_i ) / k ) -> Average density of real support around fakes?
+        #            Wait, ClovaAI: sum( in_real_manifold, axis=1 ) / k. Yes.
+        # Coverage:  mean( any( dist(f, r_i) <= r_radius_i ) over fake )? No. 
+        #            ClovaAI Coverage: Fraction of real points that are covered by at least one fake manifold... That is Recall?
+        
+        # Re-reading standard improved precision and recall paper (Kynkaanniemi et al 2019):
+        # Precision: 1/N_f * sum_j I( exists i s.t. f_j in B(r_i, R_i) )
+        # Recall:    1/N_r * sum_i I( exists j s.t. r_i in B(f_j, R_j) )
+        
+        # Density and Coverage (Naeem et al 2020):
+        # Density:   1/k N_f * sum_j sum_i I( f_j in B(r_i, R_i) )  (How many real neighborhoods is f_j in?)
+        # Coverage:  1/N_r * sum_i I( exists j s.t. f_j in B(r_i, R_i) ) (Fraction of real points whose neighborhoods contain at least one fake)
+        
+        # Okay, implementation:
+        # in_real_manifold matrix: [N_fake, N_real]. Entry (j,i) is True if f_j in B(r_i, R_i).
+        
+        # Precision: Fraction of fakes in at least one real manifold.
+        # precision = np.mean(np.any(in_real_manifold, axis=1)) -> Correct.
+        
+        # Density: Average number of real neighborhoods containing a fake point (normalized by k).
+        # density = np.mean(np.sum(in_real_manifold, axis=1) / nearest_k) -> Wait.
+        # Density is usually defined as: 1/(k*N_fake) * sum_{j} sum_{i} (f_j in B(r_i)).
+        # If in_real_manifold is (j,i), then sum over i gives # of real manifolds f_j is in.
+        # Then mean over j gives 1/N_fake * sum_j ( ... ). Then divide by k.
+        # Correct: density = np.mean(np.sum(in_real_manifold, axis=1)) / nearest_k. -> Correct.
+        
+        # Coverage: Fraction of real points whose neighborhoods contain at least one fake.
+        # This is checking columns of in_real_manifold.
+        # coverage = np.mean(np.any(in_real_manifold, axis=0)) -> Correct.
+        
+        # Recall: (from Kynkaanniemi) Fraction of real points in at least one fake manifold.
+        # This uses in_fake_manifold matrix.
+        # recall = np.mean(np.any(in_fake_manifold, axis=1)) -> Correct.
+        
+        # Redefined density/coverage logic confirms:
+        # Density/Coverage uses Real Manifolds (real radii).
+        # Precision uses Real Manifolds.
+        # Recall uses Fake Manifolds.
+        
+        coverage = np.mean(np.any(in_real_manifold, axis=0))
+
+        return [precision, recall, density, coverage]
+
     except Exception as e:
         print(f"Error in PRDC calculation: {e}")
         return [0, 0, 0, 0]
