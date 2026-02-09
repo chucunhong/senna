@@ -86,7 +86,11 @@ def calculate_performance_statistical_parity(data, labels, predictions, saIndex,
     else:
         tnr_non_protected = 0.
 
-    C_prot = (protected_pos) / (protected_pos + protected_neg)
+    if (protected_pos + protected_neg) > 0:
+        C_prot = (protected_pos) / (protected_pos + protected_neg)
+    else:
+        C_prot = 0.0
+
     if (non_protected_pos + non_protected_neg!= 0):
         C_non_prot = (non_protected_pos) / (non_protected_pos + non_protected_neg)
     else:
@@ -193,7 +197,10 @@ def calculate_performance_equalized_odds(data, labels, predictions, saIndex, saV
     else:
         tnr_non_protected = 0.
 
-    C_prot = (protected_pos) / (protected_pos + protected_neg)
+    if (protected_pos + protected_neg) > 0:
+        C_prot = (protected_pos) / (protected_pos + protected_neg)
+    else:
+        C_prot = 0.0
     if (non_protected_pos + non_protected_neg!= 0):
         C_non_prot = (non_protected_pos) / (non_protected_pos + non_protected_neg)
     else:
@@ -301,7 +308,10 @@ def calculate_performance_equal_opportunity(data, labels, predictions, saIndex, 
     else:
         tnr_non_protected = 0.
 
-    C_prot = (protected_pos) / (protected_pos + protected_neg)
+    if (protected_pos + protected_neg) > 0:
+        C_prot = (protected_pos) / (protected_pos + protected_neg)
+    else:
+        C_prot = 0.0
     if (non_protected_pos + non_protected_neg!= 0):
         C_non_prot = (non_protected_pos) / (non_protected_pos + non_protected_neg)
     else:
@@ -418,7 +428,10 @@ def calculate_performance_predictive_parity(data, labels, predictions, saIndex, 
         ppv_non_protected = tp_non_protected / (tp_non_protected + fp_non_protected)
     else:
         ppv_non_protected = 0.0
-    C_prot = (protected_pos) / (protected_pos + protected_neg)
+    if (protected_pos + protected_neg) > 0:
+        C_prot = (protected_pos) / (protected_pos + protected_neg)
+    else:
+        C_prot = 0.0
     if (non_protected_pos + non_protected_neg!= 0):
         C_non_prot = (non_protected_pos) / (non_protected_pos + non_protected_neg)
     else:
@@ -535,7 +548,10 @@ def calculate_performance_predictive_equality(data, labels, predictions, saIndex
         fpr_non_protected = fp_non_protected / (tn_non_protected + fp_non_protected)
     else:
         fpr_non_protected = 0.
-    C_prot = (protected_pos) / (protected_pos + protected_neg)
+    if (protected_pos + protected_neg) > 0:
+        C_prot = (protected_pos) / (protected_pos + protected_neg)
+    else:
+        C_prot = 0.0
     if (non_protected_pos + non_protected_neg!= 0):
         C_non_prot = (non_protected_pos) / (non_protected_pos + non_protected_neg)
     else:
@@ -653,7 +669,10 @@ def calculate_performance_treatment_equality(data, labels, predictions, saIndex,
     else:
         fnpr_non_protected = math.inf
 
-    C_prot = (protected_pos) / (protected_pos + protected_neg)
+    if (protected_pos + protected_neg) > 0:
+        C_prot = (protected_pos) / (protected_pos + protected_neg)
+    else:
+        C_prot = 0.0
     if (non_protected_pos + non_protected_neg!= 0):
         C_non_prot = (non_protected_pos) / (non_protected_pos + non_protected_neg)
     else:

@@ -141,7 +141,8 @@ def run_eval_for_file(csv_path, model_subfolder, n_runs=5):
         
         for algo in algorithms:
             # Pass scaled data
-            metrics = run_experiment(model_subfolder, csv_name, X_train_scaled, X_test_scaled, y_train, y_test, sa_index, p_Group, protected_attribute, maj_name, min_name, algo, run_id=i, verbose=True)
+            # Pass scaled data for training/prediction, but pass unscaled X_test for fairness evaluation
+            metrics = run_experiment(model_subfolder, csv_name, X_train_scaled, X_test_scaled, X_test, y_train, y_test, sa_index, p_Group, protected_attribute, maj_name, min_name, algo, run_id=i, verbose=True)
             results[algo].append(metrics)
             
     # Aggregate and Print Results
@@ -337,7 +338,7 @@ def load_credit_scoring_data(csv_path):
     
     return X, y, sa_index, p_Group, protected_attr_col, "Male", "Female"
 
-def run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, sa_index, p_Group, protected_attribute, majority_group_name, minority_group_name, algorithm, run_id=0, verbose=False):
+def run_experiment(model_subfolder, csv_name, X_train, X_test, X_test_orig, y_train, y_test, sa_index, p_Group, protected_attribute, majority_group_name, minority_group_name, algorithm, run_id=0, verbose=False):
     # Train Model
     if algorithm == 'DT':
         clf = DecisionTreeClassifier(random_state=run_id)
@@ -351,13 +352,9 @@ def run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, 
         return {}
 
     
-    if verbose:
-        print(f"  [DEBUG] Training {algorithm} (Run {run_id})...")
         
     clf.fit(X_train, y_train)
     
-    if verbose:
-        print(f"  [DEBUG] Predicting {algorithm}...")
         
     y_predicts = clf.predict(X_test)
     y_probs = clf.predict_proba(X_test)[:, 1]
@@ -369,7 +366,8 @@ def run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, 
     
     # Fairness Metrics
     try:
-        sp_res = calculate_performance_statistical_parity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)
+        # Use X_test_orig for fairness metrics to ensure sensitive attribute values match saValue (e.g. 0/1)
+        sp_res = calculate_performance_statistical_parity(X_test_orig.values, y_test.values, y_predicts, sa_index, p_Group)
         
         metrics_dict['Accuracy'] = sp_res['accuracy']
         metrics_dict['F1 Score'] = sp_res['f1-score']  # Explicitly add F1 Score to dict
@@ -380,11 +378,11 @@ def run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, 
         metrics_dict['Balanced Accuracy'] = sp_res['balanced_accuracy']
         
         metrics_dict['Statistical Parity'] = sp_res['fairness']
-        metrics_dict['Equalized Odds'] = calculate_performance_equalized_odds(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
-        # metrics_dict['Equal Opportunity'] = calculate_performance_equal_opportunity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
-        metrics_dict['Predictive Parity'] = calculate_performance_predictive_parity(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
-        metrics_dict['Predictive Equality'] = calculate_performance_predictive_equality(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
-        # metrics_dict['Treatment Equality'] = calculate_performance_treatment_equality(X_test.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
+        metrics_dict['Equalized Odds'] = calculate_performance_equalized_odds(X_test_orig.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
+        # metrics_dict['Equal Opportunity'] = calculate_performance_equal_opportunity(X_test_orig.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
+        metrics_dict['Predictive Parity'] = calculate_performance_predictive_parity(X_test_orig.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
+        metrics_dict['Predictive Equality'] = calculate_performance_predictive_equality(X_test_orig.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
+        # metrics_dict['Treatment Equality'] = calculate_performance_treatment_equality(X_test_orig.values, y_test.values, y_predicts, sa_index, p_Group)['fairness']
 
         
         # Individual Fairness: Theil Index
@@ -392,7 +390,7 @@ def run_experiment(model_subfolder, csv_name, X_train, X_test, y_train, y_test, 
 
         # ABROCA
         # Need dataframe for X_test with proper column names for ABROCA function
-        X_test_df = X_test.copy()
+        X_test_df = X_test_orig.copy()
         X_test_df['label'] = y_test.values
         X_test_df['pred'] = y_probs
         
