@@ -19,7 +19,7 @@ SENNA tackles the challenge of generating **fair synthetic data** for sensitive 
 3.  **Multi-level Fairness Validation** - Ensuring both individual fairness (k-NN validation) and group fairness (demographic balance)
 4.  **Natural Language Interface** - Converting tabular data to text for LLM processing, then deconverting with validation
 
-![Full Pipeline](full-pipeline.png)
+![Full Pipeline](/assets/full-pipeline.png)
 
 ---
 
@@ -285,8 +285,6 @@ python scripts/generate.py \
 
 ## 🔄 Full Pipeline
 
-![SENNA Full Pipeline](full-pipeline.png)
-
 SENNA follows a 4-stage pipeline:
 
 ### Stage 1: Data Preparation & Representation Learning
@@ -323,7 +321,7 @@ SENNA follows a 4-stage pipeline:
 
 ## 🎲 Generation Process
 
-![SENNA Generation Process](generation.png)
+![SENNA Generation Process](/assets/generation.png)
 
 The generation process in [`scripts/generate.py`](scripts/generate.py) implements a sophisticated pipeline with the following key components:
 
@@ -361,7 +359,7 @@ Generated data is saved in multiple formats:
 
 ## ✅ Validation Process
 
-![SENNA Validation Process](validation.png)
+![SENNA Validation Process](/assets/validation.png)
 
 Validation in [`scripts/validate.py`](scripts/validate.py) ensures generated samples are both realistic and fair through multiple checks:
 
