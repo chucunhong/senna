@@ -34,21 +34,6 @@ SENNA tackles the challenge of generating **fair synthetic data** for sensitive 
 
 ---
 
-## 📚 Citation
-
-If you use SENNA in your research, please cite our paper:
-
-```bibtex
-@article{senna2024,
-  title={SENNA: Semantic Encodings for Fair Tabular Data Generation via LLMs},
-  author={[Author Names]},
-  journal={[Conference/Journal]},
-  year={2024}
-}
-```
-
----
-
 ## 🎯 Overview
 
 SENNA tackles the challenge of generating fair synthetic data for tabular datasets. The core idea is to:
@@ -642,22 +627,6 @@ Install all dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-
----
-
-## 📞 Contact & Support
-
-- **Issues**: Please open a GitHub issue for bugs or feature requests
-- **Questions**: Use GitHub Discussions for general questions
-- **Email**: [contact email]
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
 
 ## 🙏 Acknowledgments
 
