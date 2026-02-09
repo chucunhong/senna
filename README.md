@@ -6,7 +6,7 @@
 
 > **SENNA**: A framework for generating fair synthetic tabular data using disentangled representations and LLM-based generation.
 
-📄 [Paper](SENNA.pdf) | 🤗 [Demo](#quick-start) | 📊 [Datasets](#supported-datasets)
+🤗 [Quick Start](#quick-start) | 📊 [Datasets](#supported-datasets) | 🔬 [Full Pipeline](#full-pipeline)
 
 ---
 
@@ -19,7 +19,7 @@ SENNA tackles the challenge of generating **fair synthetic data** for sensitive 
 3.  **Multi-level Fairness Validation** - Ensuring both individual fairness (k-NN validation) and group fairness (demographic balance)
 4.  **Natural Language Interface** - Converting tabular data to text for LLM processing, then deconverting with validation
 
-[View SENNA Architecture (PDF)](SENNA.pdf)
+![Full Pipeline](full-pipeline.png)
 
 ---
 
@@ -58,8 +58,6 @@ SENNA tackles the challenge of generating fair synthetic data for tabular datase
 3.  **Generate synthetic data using LLMs** - With in-context learning from diverse examples
 4.  **Data validation for multiple fairness** - Including individual fairness and group fairness
 5.  **Deconvert back to tabular format** - Validate and convert generated text back to structured data
-
-[View SENNA Architecture (PDF)](SENNA.pdf)
 
 ## 🏗️ Architecture
 
@@ -282,6 +280,139 @@ python scripts/generate.py \
 | Adult Income | 48,842 | sex, race | Income >50K / <=50K |
 | Bank Marketing | 45,211 | age, marital | Subscribed / Not |
 | Credit Scoring | 8,755 | sex | Approved / Rejected |
+
+---
+
+## 🔄 Full Pipeline
+
+![SENNA Full Pipeline](full-pipeline.png)
+
+SENNA follows a 4-stage pipeline:
+
+### Stage 1: Data Preparation & Representation Learning
+
+1. **Data Loading**: Load tabular dataset and convert to natural language sentences using templates
+2. **Model Training** ([`scripts/train.py`](scripts/train.py)): Train the disentanglement model
+   - Learn z_c (task-relevant) and z_d (task-independent) representations
+   - Use BERT encoder with dual attention heads
+   - Optimize with HSIC loss for independence
+
+### Stage 2: Diverse Example Sampling
+
+3. **K-means Clustering** ([`scripts/cluster.py`](scripts/cluster.py)): Cluster on z_d embeddings
+   - Ensures diversity in demographic representations
+   - Sample representatives from each cluster
+   - Output: ICL examples for generation
+
+### Stage 3: Synthetic Data Generation
+
+4. **LLM Generation** ([`scripts/generate.py`](scripts/generate.py)): Generate synthetic samples using Gemini API
+   - **Prompt Construction**: Build prompts with ICL examples
+   - **Batch Generation**: Generate samples in batches
+   - **Sentence Parsing**: Extract structured data from text
+   - **Duplicate Checking**: Remove duplicates against original data
+   - **Label Validation**: k-NN validation on z_c embeddings (see [Validation Process](#validation-process))
+   - **Fairness Balancing**: Optional demographic balancing via FairnessGovernor
+
+### Stage 4: Output & Evaluation
+
+5. **Data Export**: Save validated samples in original CSV format
+6. **Fairness Evaluation** ([`fairness_evaluation/`](fairness_evaluation/)): Compute metrics
+
+---
+
+## 🎲 Generation Process
+
+![SENNA Generation Process](generation.png)
+
+The generation process in [`scripts/generate.py`](scripts/generate.py) implements a sophisticated pipeline with the following key components:
+
+### Key Steps
+
+1. **Prompt Construction**
+   - Load ICL examples from clustered data
+   - Format system and user messages with dataset-specific templates
+   - Include optional fairness instructions
+
+2. **Batch Generation Loop**
+   - Generate samples using Gemini API (or other LLM providers)
+   - Parse structured output from natural language
+   - Extract attributes and labels from generated sentences
+
+3. **Multi-stage Validation**
+   - **Duplicate Checking**: Against original data and previous batches
+   - **Label Validation**: k-NN validation on z_c embeddings (see [Validation Process](#validation-process))
+   - **Structure Validation**: Ensure all required fields are present
+
+4. **Fairness Balancing** (Optional with `--fair`)
+   - Track demographic distribution via `FairnessGovernor`
+   - Guide generation toward underrepresented groups
+   - Perform final balancing across sensitive attributes
+
+### Output Formats
+
+Generated data is saved in multiple formats:
+
+- **Original CSV format**: `synthetic_data/{dataset}/{model}/{timestamp}_synthetic.csv`
+- **With sentences**: `{timestamp}_synthetic_with_sentences.csv`
+- **Metadata**: `{timestamp}_metadata.json` (includes generation stats, validation rates)
+
+---
+
+## ✅ Validation Process
+
+![SENNA Validation Process](validation.png)
+
+Validation in [`scripts/validate.py`](scripts/validate.py) ensures generated samples are both realistic and fair through multiple checks:
+
+### Individual Fairness: k-NN Label Validation
+
+The core validation mechanism uses k-nearest neighbors on z_c embeddings:
+
+**Process:**
+1. **Extract z_c embedding** for generated sample (without label description)
+2. **Find k=9 nearest neighbors** in original data using cosine distance on z_c
+3. **Check majority label** of neighbors
+4. **Accept sample** only if majority_ratio > 0.5 (strict majority)
+
+This ensures **individual fairness**: samples with similar task-relevant features (z_c) should have similar labels.
+
+### Validation Pipeline
+
+**Step 1: Label Extraction**
+- Parse label from generated sentence using regex patterns
+- Handle dataset-specific formats (e.g., "good credit risk" vs "income >50K")
+
+**Step 2: Embedding Extraction**
+- Remove label description from sentence
+- Extract z_c embedding using trained SENNA model
+- Use cached embeddings for original data
+
+**Step 3: k-NN Label Check**
+- Compute cosine distances to all original samples
+- Select k=9 nearest neighbors
+- Verify generated label matches majority
+
+**Step 4: Duplicate Detection**
+- Check against original dataset
+- Check within current batch
+- Check against previously generated samples
+
+**Step 5: Structure Validation**
+- Ensure all required attributes are present
+- Verify data types and value ranges
+
+### Validation Assets Caching
+
+To speed up validation, original data embeddings are cached:
+
+```
+cache/embeddings/{dataset}/z_c_z_d_{model_hash}.pkl
+├── z_c: [n_original, latent_dim]    # Task-relevant embeddings
+├── z_d: [n_original, latent_dim]    # Task-independent embeddings  
+├── sentences: [n_original]          # Original sentences
+└── labels: [n_original]             # Original labels
+```
 
 ---
 
