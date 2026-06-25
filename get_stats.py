@@ -3,7 +3,7 @@ import pandas as pd
 import os
 
 data_dir = "/Users/doanthang/Desktop/Code/Fairness/Dist_Learn_Fair_Tab/data"
-datasets = ["german-credit-data.csv", "bank-marketing.csv", "credit-scoring.csv", "adult.csv", "dutch-census.csv"]
+datasets = ["german-credit-data.csv", "credit-scoring.csv", "adult.csv"]
 
 print(f"{'Dataset':<25} {'Samples':<10} {'Attr':<5} {'PosLabel':<15} {'PosCount':<10} {'NegCount':<10} {'IR (+:-)':<10}")
 
@@ -41,8 +41,6 @@ for filename in datasets:
                 if ">50K" in str(k):
                     pos_label = k
                     break
-        elif filename == "bank-marketing.csv":
-            pos_label = "yes"
         elif filename == "german-credit-data.csv":
             # Usually 'good' is Pos in fairness (privileged outcome), but minority class is often target.
             # German Good=700, Bad=300.
@@ -56,9 +54,6 @@ for filename in datasets:
         elif filename == "credit-scoring.csv":
             # User said "class-label (1)"
             pos_label = 1
-        elif filename == "dutch-census.csv":
-            pos_label = 1
-            
         if pos_label is not None and pos_label in counts:
             p_count = counts[pos_label]
             n_count = n_samples - p_count

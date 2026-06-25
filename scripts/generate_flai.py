@@ -37,14 +37,6 @@ DATASET_CONFIG = {
         'target': 'class-label',
         'protected': ['Sex', 'Age'], 
     },
-    'bank-marketing.csv': {
-        'target': 'class-label',
-        'protected': ['age'], # 'sex' not typically in standard bank marketing, but age is
-    },
-    'dutch-census.csv': {
-        'target': 'occupation', # Assumption based on census nature
-        'protected': ['sex', 'age'],
-    }
 }
 
 def get_config_for_file(filename):

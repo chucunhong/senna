@@ -28,7 +28,6 @@ DATASET_CONFIG = {
     'adult.csv': {'target': 'class-label'},
     'german-credit-data.csv': {'target': 'class-label'},
     'credit-scoring.csv': {'target': 'class-label'},
-    'bank-marketing.csv': {'target': 'class-label'},
 }
 
 def generate_data_great(csv_path, output_path, n_samples=1000, epochs=5, batch_size=32, llm='gpt2'):

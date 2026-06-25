@@ -310,18 +310,6 @@ def extract_label_from_label_sentence(label_sentence: str, dataset_name: str) ->
         if match:
             return int(match.group(1))
     
-    elif dataset_name == 'bank-marketing':
-        # Format: "The subscription decision is [subscribed/not subscribed]."
-        if 'not subscribed' in label_sentence_lower:
-            return 0  # not subscribed
-        elif 'subscribed' in label_sentence_lower:
-            return 1  # subscribed
-        # Also check yes/no patterns
-        if ' yes' in label_sentence_lower:
-            return 1
-        elif ' no' in label_sentence_lower:
-            return 0
-    
     elif dataset_name == 'credit-scoring':
         # Format: "The credit application decision is [approved/rejected]."
         # 0 = approved, 1 = rejected (Mapping based on user input / dataset convention)
@@ -338,17 +326,6 @@ def extract_label_from_label_sentence(label_sentence: str, dataset_name: str) ->
         
         # Also check numeric
         match = re.search(r'score\s+is\s+(\d+)', label_sentence_lower)
-        if match:
-            return int(match.group(1))
-    
-    elif dataset_name == 'dutch-census':
-        # Format: "The occupation classification is [low-level/high-level]."
-        if 'high-level' in label_sentence_lower or 'high level' in label_sentence_lower:
-            return 1  # 1 = high-level
-        elif 'low-level' in label_sentence_lower or 'low level' in label_sentence_lower:
-            return 0  # 0 = low-level
-        # Also check numeric
-        match = re.search(r'classification\s+is\s+(\d+)', label_sentence_lower)
         if match:
             return int(match.group(1))
     
@@ -426,21 +403,10 @@ def remove_label_description_from_sentence(sentence: str, dataset_name: str) -> 
         # Also remove "above 50K" or "below 50K" at the end
         sentence = re.sub(r'\s*(above|below|income\s*[<>=]+)\s*50K\.?\s*$', '', sentence, flags=re.IGNORECASE)
     
-    elif dataset_name == 'bank-marketing':
-        # Remove patterns like "The subscription decision is ..."
-        pattern = r'\s*The subscription decision is.*$'
-        sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
-        sentence = re.sub(r'\s*(subscribed|not\s+subscribed)\.?\s*$', '', sentence, flags=re.IGNORECASE)
-    
     elif dataset_name == 'credit-scoring':
         sentence = re.sub(r'\.?\s*The\s+credit\s+application\s+decision\s+is\s+(approved|rejected)\.?$', '', sentence, flags=re.IGNORECASE).strip()
         # Fallback for old "score is" format
         sentence = re.sub(r'\s*The credit score is\s*\d+\.?\s*$', '', sentence, flags=re.IGNORECASE)
-    
-    elif dataset_name == 'dutch-census':
-        # Remove patterns like "The occupation classification is ..."
-        pattern = r'\s*The occupation classification is.*$'
-        sentence = re.sub(pattern, '', sentence, flags=re.IGNORECASE)
     
     # Clean up trailing spaces and punctuation
     sentence = sentence.strip()
@@ -460,7 +426,7 @@ def add_label_description_to_sentence(sentence: str, label: int, dataset_name: s
     
     Args:
         sentence: Original sentence without label
-        label: Label value (0 or 1, or occupation code for dutch-census)
+        label: Label value (0 or 1)
         dataset_name: Name of dataset
     
     Returns:
@@ -480,23 +446,12 @@ def add_label_description_to_sentence(sentence: str, label: int, dataset_name: s
             label_desc = "income <=50K"
         return f"{sentence} The income classification is {label_desc}."
     
-    elif dataset_name == 'bank-marketing':
-        if label == 1:
-            label_desc = "subscribed"
-        else:
-            label_desc = "not subscribed"
-        return f"{sentence} The subscription decision is {label_desc}."
-    
     elif dataset_name == 'credit-scoring':
         if label == 0:
             label_desc = "approved"
         else:
             label_desc = "rejected"
         return f"{sentence} The credit decision is {label_desc}."
-    
-    elif dataset_name == 'dutch-census':
-        # Dutch census uses occupation code as label
-        return f"{sentence} The occupation classification is {label}."
     
     else:
         # Default format

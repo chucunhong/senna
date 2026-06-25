@@ -622,7 +622,7 @@ def load_german_credit_data_balanced(n_samples=None, random_state=42):
 def load_dataset_generic(dataset_name, csv_path=None, n_samples=None, random_state=42):
     """
     Generic loader for different datasets (internal use - loads from raw data only).
-    Supports: adult, bank-marketing, credit-scoring, dutch-census, german-credit-data, credit-card-clients, kdd-census-income
+    Supports: adult, credit-scoring, german-credit-data, credit-card-clients, kdd-census-income
     
     NOTE: For most use cases, use load_dataset() instead, which prioritizes processed_data.
     This function is used internally by load_dataset() when raw data needs to be loaded.
@@ -678,7 +678,7 @@ def load_dataset_generic(dataset_name, csv_path=None, n_samples=None, random_sta
     possible_cols = [
         'class', 'target', 'label', 'y', 'outcome', 'risk',
         'class-label', 'class_label', 'target-label', 'target_label',
-        'occupation'  # dutch-census uses occupation as label
+        'occupation'
     ]
     for col in possible_cols:
         if col in df.columns:

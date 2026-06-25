@@ -263,7 +263,6 @@ python scripts/generate.py \
 |---------|---------|----------------|-------|
 | German Credit | 1,000 | sex, age | Good/Bad credit risk |
 | Adult Income | 48,842 | sex, race | Income >50K / <=50K |
-| Bank Marketing | 45,211 | age, marital | Subscribed / Not |
 | Credit Scoring | 8,755 | sex | Approved / Rejected |
 
 ---

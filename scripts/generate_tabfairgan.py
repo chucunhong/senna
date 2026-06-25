@@ -49,9 +49,7 @@ DATASET_CONFIG = {
              'S_under': '2',
              'Y_desire': '1'
         }
-    },
-    # bank-marketing has continuous sensitive attribute (age), skipping fairness constraints for now
-    'bank-marketing.csv': { 'fairness_config': None }
+    }
 }
 
 def generate_data_tabfairgan(csv_path, output_path, n_samples=1000, epochs=10, batch_size=256, device_arg=None):

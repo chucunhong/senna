@@ -53,17 +53,8 @@ class FairnessGovernor:
             # Check for attr, lower(attr), or Capitalized(attr)
             val = entry.get(attr, entry.get(attr.lower(), entry.get(attr.capitalize(), 'unknown')))
             
-            # Special handling for 'age' in bank-marketing to avoid too many groups
-            if attr.lower() == 'age' and self.dataset_name == 'bank-marketing':
-                try:
-                    age_val = int(val)
-                    if age_val < 30: val_str = "<30"
-                    elif age_val <= 60: val_str = "30-60"
-                    else: val_str = ">60"
-                except (ValueError, TypeError):
-                    val_str = str(val).lower().strip()
             # Special handling for 'age' in german-credit-data (often <25 vs >=25 is the fairness cut)
-            elif attr.lower() == 'age' and self.dataset_name == 'german-credit-data':
+            if attr.lower() == 'age' and self.dataset_name == 'german-credit-data':
                 try:
                     age_val = int(val)
                     if age_val <= 25: val_str = "<=25" # Young
@@ -379,21 +370,11 @@ def convert_to_original_csv_format(combined_data: List[Dict], dataset_name: str)
             'marital-status', 'occupation', 'relationship', 'race', 'gender',
             'capital-gain', 'capital-loss', 'hours-per-week', 'native-country', 'class-label'
         ],
-        'bank-marketing': [
-            'age', 'job', 'marital', 'education', 'default', 'balance', 'housing',
-            'loan', 'contact', 'day', 'month', 'duration', 'campaign', 'pdays',
-            'previous', 'poutcome', 'class-label'
-        ],
         'credit-scoring': [
             'Age', 'Language', 'Sex', 'Marital', 'Has-Credit', 'Field', 'Month-of-birth',
             'Day-of-birth', 'Region', 'Number_of_credits', 'Linked-cards', 'INPS_mln_sum',
             'INPS-yes-no', 'Score-level', 'Score-class', 'Score_point', 'Changed-phone-number', 'class-label'
         ],
-        'dutch-census': [
-            'sex', 'age', 'household_position', 'household_size', 'prev_residence_place',
-            'citizenship', 'country_birth', 'edu_level', 'economic_status', 'cur_eco_activity',
-            'marital_status', 'occupation'
-        ]
     }
     
     if dataset_name in dataset_columns:
@@ -616,23 +597,6 @@ def load_icl_examples(csv_path: str, shuffle: bool = True, random_state: int = 4
                     sentence_clean += '.'
                 sentence_clean += f" The credit application decision is {label_desc}."
             
-            elif dataset_name == 'bank-marketing':
-                # Format: "The subscription decision is {label}."
-                # Label is 'subscribed' or 'not subscribed' (or 1/0 mapped)
-                # Check dataset structure: class-label is 'yes'/'no' or 1/0?
-                # Usually bank-marketing is yes/no. 
-                # Prompts says: "class-label: subscribed or not subscribed"
-                # Let's handle both 1/0 and yes/no.
-                lbl_str = str(label).strip().lower()
-                if lbl_str in ['1', 'yes', 'subscribed']:
-                    label_desc = "subscribed"
-                else: 
-                    label_desc = "not subscribed"
-                
-                if not sentence_clean.endswith('.'):
-                    sentence_clean += '.'
-                sentence_clean += f" The subscription decision is {label_desc}."
-        
         # Format as example
         examples.append(f"Example {i}: {sentence_clean}")
     
@@ -1195,15 +1159,6 @@ def extract_sentence_and_label(text: str, dataset_name: str = None) -> tuple:
              label = 1
              sentence = sentence[:-2].strip()
 
-    elif dataset_name == 'bank-marketing':
-        # Look for "subscription decision is subscribed" or "subscription decision is not subscribed"
-        if re.search(r'decision\s+is\s+subscribed', sentence, re.IGNORECASE) and not re.search(r'not\s+subscribed', sentence, re.IGNORECASE):
-            label = 1  # yes/subscribed
-            sentence = re.sub(r'\.?\s*The\s+subscription\s+decision\s+is\s+subscribed\.?', '', sentence, flags=re.IGNORECASE).strip()
-        elif re.search(r'decision\s+is\s+not\s+subscribed', sentence, re.IGNORECASE):
-            label = 0  # no/not subscribed
-            sentence = re.sub(r'\.?\s*The\s+subscription\s+decision\s+is\s+not\s+subscribed\.?', '', sentence, flags=re.IGNORECASE).strip()
-    
     # If not found, try numeric label patterns
     if label is None:
         label_patterns = [
@@ -1524,94 +1479,6 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
                      if '<=50K' in val or val == '0': extracted_fields['class-label'] = '0'
                      elif '>50K' in val or val == '1': extracted_fields['class-label'] = '1'
         
-        elif dataset_name == 'bank-marketing':
-            # Extract age
-            age_match = re.search(r'A\s+(\d+)-year-old', sentence, re.IGNORECASE)
-            if age_match:
-                extracted_fields['age'] = int(age_match.group(1))
-            
-            # Extract marital status - "{marital} client"
-            marital_match = re.search(r'year-old\s+(\w+)\s+client', sentence, re.IGNORECASE)
-            if marital_match:
-                extracted_fields['marital'] = marital_match.group(1).strip()
-            
-            # Extract education - "with {education} education"
-            edu_match = re.search(r'with\s+(\w+)\s+education', sentence, re.IGNORECASE)
-            if edu_match:
-                extracted_fields['education'] = edu_match.group(1).strip()
-            
-            # Extract job - "employed as {job}."
-            job_match = re.search(r'employed as\s+([^.]+?)(?:\.|The)', sentence, re.IGNORECASE)
-            if job_match:
-                extracted_fields['job'] = job_match.group(1).strip()
-            
-            # Extract default - "has {default} credit default"
-            if 'has a credit default' in sentence.lower():
-                extracted_fields['default'] = 'yes'
-            elif 'has no credit default' in sentence.lower():
-                extracted_fields['default'] = 'no'
-            
-            # Extract balance - "balance of {balance} euros"
-            balance_match = re.search(r'balance of\s+(-?\d+)\s+euros', sentence, re.IGNORECASE)
-            if balance_match:
-                extracted_fields['balance'] = int(balance_match.group(1))
-            
-            # Extract housing - "{housing} housing loan"
-            if 'a housing loan' in sentence.lower():
-                extracted_fields['housing'] = 'yes'
-            elif 'no housing loan' in sentence.lower():
-                extracted_fields['housing'] = 'no'
-            
-            # Extract loan - "{loan} personal loan"
-            if 'a personal loan' in sentence.lower():
-                extracted_fields['loan'] = 'yes'
-            elif 'no personal loan' in sentence.lower():
-                extracted_fields['loan'] = 'no'
-
-            # Extract contact - "via {contact} on"
-            contact_match = re.search(r'via\s+(\w+)\s+on', sentence, re.IGNORECASE)
-            if contact_match:
-                extracted_fields['contact'] = contact_match.group(1)
-
-            # Extract day - "day {day} of"
-            day_match = re.search(r'day\s+(\d+)\s+of', sentence, re.IGNORECASE)
-            if day_match:
-                extracted_fields['day'] = int(day_match.group(1))
-
-            # Extract month - "of {month},"
-            month_match = re.search(r'of\s+(\w+),', sentence, re.IGNORECASE)
-            if month_match:
-                extracted_fields['month'] = month_match.group(1)
-
-            # Extract duration - "duration {duration} seconds"
-            duration_match = re.search(r'duration\s+(\d+)\s+seconds', sentence, re.IGNORECASE)
-            if duration_match:
-                extracted_fields['duration'] = int(duration_match.group(1))
-            
-            # Extract campaign - "involved {campaign} contacts"
-            campaign_match = re.search(r'involved\s+(\d+)\s+contacts', sentence, re.IGNORECASE)
-            if campaign_match:
-                extracted_fields['campaign'] = int(campaign_match.group(1))
-
-            # Extract pdays - "{pdays} days since"
-            pdays_match = re.search(r'with\s+(-?\d+)\s+days since', sentence, re.IGNORECASE)
-            if pdays_match:
-                extracted_fields['pdays'] = int(pdays_match.group(1))
-
-            # Extract previous - "{previous} previous contacts"
-            previous_match = re.search(r'contact,\s+(\d+)\s+previous', sentence, re.IGNORECASE)
-            if previous_match:
-                extracted_fields['previous'] = int(previous_match.group(1))
-
-            # Extract poutcome - "outcome {poutcome}."
-            poutcome_match = re.search(r'outcome\s+(\w+)\.', sentence, re.IGNORECASE)
-            if poutcome_match:
-                extracted_fields['poutcome'] = poutcome_match.group(1)
-            
-            # Map label to class-label
-            if 'label' in extracted_fields:
-                extracted_fields['class-label'] = extracted_fields.pop('label')
-        
         elif dataset_name == 'credit-scoring':
             # Extract Age
             age_match = re.search(r'A\s+(\d+)-year-old', sentence, re.IGNORECASE)
@@ -1742,77 +1609,6 @@ def extract_fields_from_sentences(results: List[Dict], dataset_name: str) -> Lis
                  
                  pass
         
-        elif dataset_name == 'dutch-census':
-            # Extract age
-            age_match = re.search(r'A\s+(\d+)-year-old', sentence, re.IGNORECASE)
-            if age_match:
-                extracted_fields['age'] = int(age_match.group(1))
-            
-            # Extract sex
-            if re.search(r'year-old\s+male\s+with', sentence, re.IGNORECASE):
-                extracted_fields['sex'] = 'male'
-            elif re.search(r'year-old\s+female\s+with', sentence, re.IGNORECASE):
-                extracted_fields['sex'] = 'female'
-            
-            # Extract marital status code
-            marital_match = re.search(r'marital status\s+(\d+)', sentence, re.IGNORECASE)
-            if marital_match:
-                extracted_fields['marital_status'] = int(marital_match.group(1))
-            
-            # Extract household position
-            hh_pos_match = re.search(r'household position\s+(\d+)', sentence, re.IGNORECASE)
-            if hh_pos_match:
-                extracted_fields['household_position'] = int(hh_pos_match.group(1))
-
-            # Extract household size
-            hh_size_match = re.search(r'household of size\s+(\d+)', sentence, re.IGNORECASE)
-            if hh_size_match:
-                extracted_fields['household_size'] = int(hh_size_match.group(1))
-            
-            # Extract prev residence (1=Netherlands, 2=elsewhere)
-            if 'resided in Netherlands' in sentence:
-                extracted_fields['prev_residence_place'] = 1
-            elif 'resided in elsewhere' in sentence:
-                extracted_fields['prev_residence_place'] = 2
-            
-            # Extract citizenship (1=Dutch, 2=non-Dutch)
-            if 'holds Dutch citizenship' in sentence:
-                extracted_fields['citizenship'] = 1
-            elif 'holds non-Dutch citizenship' in sentence:
-                extracted_fields['citizenship'] = 2
-            
-            # Extract country birth (1=Netherlands, 2=elsewhere)
-            if 'born in Netherlands' in sentence:
-                extracted_fields['country_birth'] = 1
-            elif 'born in elsewhere' in sentence:
-                extracted_fields['country_birth'] = 2
-            
-            # Extract education level
-            edu_match = re.search(r'education level\s+(\d+)', sentence, re.IGNORECASE)
-            if edu_match:
-                extracted_fields['edu_level'] = int(edu_match.group(1))
-            
-            # Extract economic status
-            eco_match = re.search(r'economic status\s+(\d+)', sentence, re.IGNORECASE)
-            if eco_match:
-                extracted_fields['economic_status'] = int(eco_match.group(1))
-            
-            # Extract cur_eco_activity
-            cur_eco_match = re.search(r'activity\s+(\d+)', sentence, re.IGNORECASE)
-            if cur_eco_match:
-                extracted_fields['cur_eco_activity'] = int(cur_eco_match.group(1))
-            
-            # Extract occupation (label)
-            # Mapped: 0=low-level, 1=high-level
-            if 'low-level' in str(label):
-                 extracted_fields['occupation'] = 0
-            elif 'high-level' in str(label):
-                 extracted_fields['occupation'] = 1
-            
-            # Remove raw label field as we mapped it to occupation
-            if 'label' in extracted_fields:
-                del extracted_fields['label']
-                
         extracted.append(extracted_fields)
     
     return extracted

@@ -114,55 +114,6 @@ Strict requirement:
 - The JSON must be directly parseable
 """,
 
-    "bank-marketing":
-    """
-System role:
-    You are a tabular synthetic data generator. You produce realistic yet diverse synthetic samples that mirror the feature-label distributions of the provided examples.
-User instructions:
-    Using your knowledge of bank marketing data, generate exactly {n_samples} realistic samples.
-    You will first receive a block of real examples as in-context demonstrations.
-In-context data:
-{icl_examples}
-
-Produce your output as a single JSON object containing {n_samples} entries. Do not include any explanatory text, commentary, or extra fields. The JSON must be directly parseable.
-The template of each entry (5 sentences, covering all 16 fields):
-    A {{age}}-year-old {{marital}} client with {{education}} education is employed as {{job}}. The client has {{default}} credit default, balance of {{balance}} euros, {{housing}} housing loan, and {{loan}} personal loan. The client was contacted via {{contact}} on day {{day}} of {{month}}, with call duration {{duration}} seconds. The campaign involved {{campaign}} contacts, with {{pdays}} days since last contact, {{previous}} previous contacts, and outcome {{poutcome}}. The subscription decision is {{class-label}}.
-    with:
-        - age: integer
-        - marital: married, single, divorced
-        - education: tertiary, secondary, primary, unknown
-        - job: management, technician, entrepreneur, blue-collar, etc.
-        - default: "a" or "no"
-        - balance: integer euros (can be negative)
-        - housing: "a" or "no"
-        - loan: "a" or "no"
-        - contact: cellular, telephone, unknown
-        - day: integer day of month
-        - month: month name (may, jun, jul, etc.)
-        - duration: integer seconds
-        - campaign: integer number of contacts
-        - pdays: integer (-1 if never contacted)
-        - previous: integer
-        - poutcome: unknown, failure, other, success
-        - class-label: subscribed or not subscribed
-    
-Output format:
-{{
-    "1": "A 58-year-old married client... The subscription decision is not subscribed.",
-    "2": "A 35-year-old single client... The subscription decision is subscribed.",
-    ...
-    "{n_samples}": "..."
-}}
-
-Strict requirement: 
-- Return exactly {n_samples} entries in the JSON object
-- Use numeric keys from "1" to "{n_samples}"
-- Each entry must include ALL 16 fields
-- Each entry must end with "The subscription decision is [subscribed/not subscribed]."
-- Do not include any explanatory text, commentary, or extra fields
-- The JSON must be directly parseable
-""",
-
     "credit-scoring":
     """
 System role:
@@ -213,49 +164,6 @@ Strict requirement:
 - The JSON must be directly parseable
 """,
 
-    "dutch-census":
-    """
-System role:
-    You are a tabular synthetic data generator. You produce realistic yet diverse synthetic samples that mirror the feature-label distributions of the provided examples.
-User instructions:
-    Using your knowledge of Dutch census data, generate exactly {n_samples} realistic samples.
-    You will first receive a block of real examples as in-context demonstrations.
-In-context data:
-{icl_examples}
-
-Produce your output as a single JSON object containing {n_samples} entries. Do not include any explanatory text, commentary, or extra fields. The JSON must be directly parseable.
-The template of each entry (4 sentences, covering all 11 fields):
-    A {{age}}-year-old {{sex}} with marital status {{marital_status}} holds household position {{household_position}} in a household of size {{household_size}}. The individual previously resided in {{prev_residence_place}}, holds {{citizenship}} citizenship, and was born in {{country_birth}}. The individual has education level {{edu_level}}, economic status {{economic_status}}, and current economic activity {{cur_eco_activity}}. The occupation classification is {{occupation}}.
-    with:
-        - age: integer age
-        - sex: Male or Female
-        - marital_status: integer code
-        - household_position: integer code
-        - household_size: integer size
-        - prev_residence_place: Netherlands or elsewhere
-        - citizenship: Dutch or non-Dutch
-        - country_birth: Netherlands or elsewhere
-        - edu_level: integer level
-        - economic_status: integer code
-        - cur_eco_activity: integer code
-        - occupation: low-level or high-level (this is the label)
-    
-Output format:
-{{
-    "1": "A 34-year-old male with marital status 2... The occupation classification is high-level.",
-    "2": "A 28-year-old female with marital status 1... The occupation classification is low-level.",
-    ...
-    "{n_samples}": "..."
-}}
-
-Strict requirement: 
-- Return exactly {n_samples} entries in the JSON object
-- Use numeric keys from "1" to "{n_samples}"
-- Each entry must include ALL 11 fields
-- Each entry must end with "The occupation classification is [low-level/high-level]."
-- Do not include any explanatory text, commentary, or extra fields
-- The JSON must be directly parseable
-"""
 }
 
 

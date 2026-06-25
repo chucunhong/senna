@@ -79,56 +79,6 @@
     "sensitive_attr": "gender",
     "label_col": "class-label"
   },
-  "bank-marketing": {
-    "sentences": [
-      "A {age}-year-old {marital} client with {education} education is employed as {job}.",
-      "The client has {default} credit default, balance of {balance} euros, {housing} housing loan, and {loan} personal loan.",
-      "The client was contacted via {contact} on day {day} of {month}, with call duration {duration} seconds.",
-      "The campaign involved {campaign} contacts, with {pdays} days since last contact, {previous} previous contacts, and outcome {poutcome}.",
-      "The subscription decision is {class-label}."
-    ],
-    "field_mapping": {
-      "age": "age",
-      "job": "job",
-      "marital": "marital",
-      "education": "education",
-      "default": "default",
-      "balance": "balance",
-      "housing": "housing",
-      "loan": "loan",
-      "contact": "contact",
-      "day": "day",
-      "month": "month",
-      "duration": "duration",
-      "campaign": "campaign",
-      "pdays": "pdays",
-      "previous": "previous",
-      "poutcome": "poutcome",
-      "class-label": "class-label"
-    },
-    "value_transforms": {
-      "default": {
-        "yes": "a",
-        "no": "no"
-      },
-      "housing": {
-        "yes": "a",
-        "no": "no"
-      },
-      "loan": {
-        "yes": "a",
-        "no": "no"
-      },
-      "class-label": {
-        "yes": "subscribed",
-        "no": "not subscribed",
-        "1": "subscribed",
-        "0": "not subscribed"
-      }
-    },
-    "sensitive_attr": "age",
-    "label_col": "class-label"
-  },
   "credit-scoring": {
     "sentences": [
       "A {age}-year-old {sex} with marital status {marital} speaks language {language} and lives in region {region}.",
@@ -186,48 +136,4 @@
     "sensitive_attr": "sex",
     "label_col": "class-label"
   },
-  "dutch-census": {
-    "sentences": [
-      "A {age}-year-old {sex} with marital status {marital_status} holds household position {household_position} in a household of size {household_size}.",
-      "The individual previously resided in {prev_residence_place}, holds {citizenship} citizenship, and was born in {country_birth}.",
-      "The individual has education level {edu_level}, economic status {economic_status}, and current economic activity {cur_eco_activity}.",
-      "The occupation classification is {occupation}."
-    ],
-    "field_mapping": {
-      "sex": "sex",
-      "age": "age",
-      "household_position": "household_position",
-      "household_size": "household_size",
-      "prev_residence_place": "prev_residence_place",
-      "citizenship": "citizenship",
-      "country_birth": "country_birth",
-      "edu_level": "edu_level",
-      "economic_status": "economic_status",
-      "cur_eco_activity": "cur_eco_activity",
-      "marital_status": "marital_status",
-      "occupation": "occupation"
-    },
-    "value_transforms": {
-      "occupation": {
-        "0": "low-level",
-        "1": "high-level",
-        "0.0": "low-level",
-        "1.0": "high-level"
-      },
-      "citizenship": {
-        "1": "Dutch",
-        "2": "non-Dutch"
-      },
-      "country_birth": {
-        "1": "Netherlands",
-        "2": "elsewhere"
-      },
-      "prev_residence_place": {
-        "1": "Netherlands",
-        "2": "elsewhere"
-      }
-    },
-    "sensitive_attr": "sex",
-    "label_col": "occupation"
-  }
 }

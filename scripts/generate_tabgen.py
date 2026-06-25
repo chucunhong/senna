@@ -37,16 +37,12 @@ DATASET_MAPPING = {
     'adult.csv': 'adult', 
     'german-credit-data.csv': 'german-credit-data',
     'credit-scoring.csv': 'credit-scoring',
-    'bank-marketing.csv': 'bank-marketing',
-    'dutch-census.csv': 'dutch-census'
 }
 
 YLABEL_MAP = {
     "adult": "class-label",
     "german-credit-data": "class-label",
     "credit-scoring": "class-label",
-    "bank-marketing": "class-label",
-    "dutch-census": "occupation"
 }
 
 def generate_data_tabgen(csv_path, output_path, n_samples=1000, n_processes=8, chunk_size=100):
