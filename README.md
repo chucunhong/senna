@@ -222,37 +222,114 @@ python scripts/generate.py \
 
 ## ⚙️ Parameters
 
+### Full Configuration Used in the Paper
+
+This is the exact configuration behind every SENNA number reported in the paper.
+Values are read from the defaults in the scripts listed in the last column; the
+only flags overridden at run time are `--dataset`, `--n-examples`, and `--model`.
+
+**Encoder and latent space**
+
+| Component | Value | Source |
+|-----------|-------|--------|
+| BERT encoder | `bert-base-uncased` (768-d), fully fine-tuned | [components/models.py](components/models.py) |
+| Max sequence length | 256 tokens | [components/tokenization.py](components/tokenization.py) |
+| Latent dim of z_c, z_d | 128 each | `--latent-dim` |
+| Pooling | learned attention over tokens, stop words masked | [components/models.py](components/models.py) |
+| VAE bottleneck | 768 → 256 → 128, reparameterized | [components/models.py](components/models.py) |
+
+**Loss weights**
+
+| Component | Value | Source |
+|-----------|-------|--------|
+| λ_task | 8.0 | `--lambda-task` |
+| λ_adv — HSIC(z_d, y) | 1.0 | `--lambda-adv` |
+| λ_ortho — HSIC(z_c, z_d) | 0.1 | `--lambda-ortho` |
+| λ_rec | 0.5 | `--lambda-rec` |
+| λ_kl | 0.01 | `--lambda-kl` |
+| λ_var — anti-collapse on z_d | 0.1 | `--lambda-var` |
+| HSIC kernel | RBF | [components/losses.py](components/losses.py) |
+| HSIC bandwidth | median heuristic, recomputed per mini-batch and per argument | [components/losses.py](components/losses.py) |
+
+**Encoder training**
+
+| Component | Value | Source |
+|-----------|-------|--------|
+| Optimizer (encoder, heads, decoders) | AdamW, weight decay 0.01 | [components/training.py](components/training.py) |
+| Learning rate | 2e-5 (BERT), 4e-5 (heads/decoders) | `--lr`, ×2 for heads |
+| Optimizer (classifiers) | Adam, lr 2e-4 | [components/training.py](components/training.py) |
+| LR schedule | ReduceLROnPlateau (×0.5, patience 5, floor 1e-6) | [components/training.py](components/training.py) |
+| Batch size B | 64 (auto-selected from GPU memory) | `--batch-size` |
+| Epochs T | 100 | `--epochs` |
+| Precision | mixed (AMP) on GPU | `--use-amp` |
+
+**Exemplar selection**
+
+| Component | Value | Source |
+|-----------|-------|--------|
+| Clustering space | z_d, clustered separately per class label | [scripts/cluster.py](scripts/cluster.py) |
+| Number of clusters K | selected by silhouette over K ∈ [2, 20]; **K = 2** for every dataset–label group | `--method silhouette` |
+| Representative-selection rule | uniform random draw **without replacement** within each cluster | [scripts/cluster.py](scripts/cluster.py) |
+| Exemplars per cluster | 100 (Adult, Credit-Scoring); 20 (German Credit) | `--n-examples` |
+| Resulting exemplar pool | 400 / 400 / 80 records | — |
+
+**Generation and validation**
+
+| Component | Value | Source |
+|-----------|-------|--------|
+| Decoding temperature | 0.7 | `--temperature` |
+| Decoding top-p | 0.9 | `--top-p` |
+| Max output tokens | 8192 | `--max-output-tokens` |
+| Samples requested per call | 100 (50 via OpenRouter) | `--max-samples-per-call` |
+| Concurrent workers | 8 | [scripts/generate.py](scripts/generate.py) |
+| k in kNN consistency validation | 9 | `--k-neighbors` |
+| Majority threshold τ | 0.5 | `--majority-threshold` |
+| Retries | 3, **transport-level failures only**. A candidate rejected by the validator is discarded, not regenerated; additional batches are scheduled until the target count is met | [scripts/generate.py](scripts/generate.py) |
+| Deduplication | exact sentence match, global across batches | [scripts/generate.py](scripts/generate.py) |
+| Random seed | 42 | `--random-state` |
+
 ### Training (`scripts/train.py`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--lambda-task` | 3.0 | Task loss weight (z_c → y accuracy) |
-| `--lambda-adv` | 0.1 | Adversarial loss weight (HSIC(z_d, y)) |
-| `--lambda-ortho` | 1.0 | Orthogonality loss weight (HSIC(z_c, z_d)) |
+| `--lambda-task` | 8.0 | Task loss weight (z_c → y accuracy) |
+| `--lambda-adv` | 1.0 | Independence loss weight (HSIC(z_d, y)) |
+| `--lambda-ortho` | 0.1 | Orthogonality loss weight (HSIC(z_c, z_d)) |
 | `--lambda-rec` | 0.5 | Reconstruction loss weight |
-| `--lambda-kl` | 0.1 | KL divergence weight |
-| `--latent-dim` | 32 | Latent dimension for z_c and z_d |
+| `--lambda-kl` | 0.01 | KL divergence weight |
+| `--lambda-var` | 0.1 | Variance constraint on z_d (prevents collapse) |
+| `--latent-dim` | 128 | Latent dimension for z_c and z_d |
+| `--batch-size` | auto | Batch size (auto-detected from GPU memory) |
 | `--epochs` | 100 | Training epochs |
-| `--lr` | 2e-5 | Learning rate |
+| `--lr` | 2e-5 | Learning rate (BERT; heads use 2×) |
 
 ### Generation (`scripts/generate.py`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--n-examples` | 1 | Number of samples to generate |
+| `--temperature` | 0.7 | Sampling temperature |
+| `--top-p` | 0.9 | Nucleus sampling parameter |
+| `--max-output-tokens` | 8192 | Max tokens per API response |
+| `--max-samples-per-call` | 1000 | Samples per API call (capped to 100, or 50 via OpenRouter) |
 | `--fair` | False | Enable fairness features |
 | `--sensitive-attrs` | "sex" | Sensitive attribute for Fairness Governor |
 | `--k-neighbors` | 9 | k-NN neighbors for label validation |
+| `--majority-threshold` | 0.5 | Min fraction of neighbors sharing the label |
 | `--no-shuffle` | False | Don't shuffle ICL examples |
-| `--model` | gemini-2.0-flash-exp | LLM model to use |
+| `--model` | gemini-3-pro-preview | LLM model to use |
+| `--provider` | gemini | `gemini` or `openrouter` |
 
 ### Clustering (`scripts/cluster.py`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--n-examples` | 10 | Number of examples per cluster |
-| `--k-min` | 2 | Minimum K for K-means |
-| `--k-max` | 10 | Maximum K for K-means |
+| `--n-examples` | 10 | Number of examples sampled per cluster |
+| `--k` | None | Fixed K; if unset, K is searched |
+| `--min-k` | 2 | Minimum K for K-means search |
+| `--max-k` | 20 | Maximum K for K-means search |
+| `--method` | silhouette | Criterion for selecting K (`silhouette`, `elbow`, `davies_bouldin`) |
+| `--random-state` | 42 | Random seed |
 | `--resample-only` | False | Only resample, don't re-cluster |
 
 ---
