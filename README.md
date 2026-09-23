@@ -9,6 +9,9 @@
 🤗 [Quick Start](#quick-start) | 📊 [Datasets](#supported-datasets) | 🔬 [Full Pipeline](#full-pipeline)
 
 ---
+## Journal Accepted 
+
+The paper titled **"Fair Synthetic Tabular Data Generation via Disentangled Semantic Encoding and Large Language Models"** has been accepted for **Discover Artificial Intelligent (Q1)**. Congratulation my team.  
 
 ## 📰 Abstract
 
@@ -712,14 +715,6 @@ pip install -r requirements.txt
 - Baseline methods: CTGAN, GREAT, TabFairGAN, CLLM, FLAi
 
 ---
-
-## 🗺️ Roadmap
-
-- [ ] Add support for more LLM backends (OpenAI GPT, Claude, Llama)
-- [ ] Implement additional fairness notions (individual fairness, causality-based)
-- [ ] Support for multi-sensitive attribute scenarios
-- [ ] GUI for easy experimentation
-- [ ] Pre-trained models for common datasets
 
 ---
 
