@@ -13,6 +13,8 @@
 
 The paper titled **"Fair Synthetic Tabular Data Generation via Disentangled Semantic Encoding and Large Language Models"** has been accepted for **Discover Artificial Intelligent (Q1)**. Congratulation my team.  
 
+Link to the paper: https://link.springer.com/article/10.1007/s44163-026-02383-w
+
 ## 📰 Abstract
 
 SENNA tackles the challenge of generating **fair synthetic data** for sensitive tabular datasets. Traditional synthetic data generators often fail to preserve fairness properties or produce representative samples across demographic groups. Our approach combines:
